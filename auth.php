@@ -13,7 +13,7 @@ function getTelegramUser($initData) {
     }
 
     try {
-        // Parse the query string parameters
+        // Parse theff query string parameters
         parse_str($initData, $params);
         
         $hash = isset($params['hash']) ? $params['hash'] : null;
