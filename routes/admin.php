@@ -93,8 +93,11 @@ if ($route === '/admin/users' && $method === 'GET') {
         $params = [];
 
         if (!empty($search)) {
-            $whereClause = 'WHERE tg_id LIKE :s OR username LIKE :s OR first_name LIKE :s OR last_name LIKE :s';
-            $params['s'] = "%{$search}%";
+            $whereClause = 'WHERE tg_id LIKE :s1 OR username LIKE :s2 OR first_name LIKE :s3 OR last_name LIKE :s4';
+            $params['s1'] = "%{$search}%";
+            $params['s2'] = "%{$search}%";
+            $params['s3'] = "%{$search}%";
+            $params['s4'] = "%{$search}%";
         }
 
         $validSortColumns = [
@@ -248,8 +251,11 @@ if ($route === '/admin/orders' && $method === 'GET') {
         $params = [];
 
         if (!empty($search)) {
-            $whereClause .= ' AND (o.user_id LIKE :s OR a.username LIKE :s OR a.first_name LIKE :s OR o.target_link LIKE :s)';
-            $params['s'] = "%{$search}%";
+            $whereClause .= ' AND (o.user_id LIKE :s1 OR a.username LIKE :s2 OR a.first_name LIKE :s3 OR o.target_link LIKE :s4)';
+            $params['s1'] = "%{$search}%";
+            $params['s2'] = "%{$search}%";
+            $params['s3'] = "%{$search}%";
+            $params['s4'] = "%{$search}%";
         }
 
         if (!empty($status)) {
@@ -302,8 +308,11 @@ if ($route === '/admin/deposits' && $method === 'GET') {
         $params = [];
 
         if (!empty($search)) {
-            $whereClause .= ' AND (d.user_id LIKE :s OR a.username LIKE :s OR a.first_name LIKE :s OR d.tx_ref LIKE :s)';
-            $params['s'] = "%{$search}%";
+            $whereClause .= ' AND (d.user_id LIKE :s1 OR a.username LIKE :s2 OR a.first_name LIKE :s3 OR d.tx_ref LIKE :s4)';
+            $params['s1'] = "%{$search}%";
+            $params['s2'] = "%{$search}%";
+            $params['s3'] = "%{$search}%";
+            $params['s4'] = "%{$search}%";
         }
 
         if (!empty($status)) {
@@ -378,8 +387,8 @@ if ($route === '/admin/settings') {
                 exit;
             }
 
-            $stmt = $pdo->prepare('INSERT INTO settings (setting_key, setting_value) VALUES (:key, :value) ON DUPLICATE KEY UPDATE setting_value = :value');
-            $stmt->execute(['key' => $key, 'value' => $value]);
+            $stmt = $pdo->prepare('INSERT INTO settings (setting_key, setting_value) VALUES (:key, :value) ON DUPLICATE KEY UPDATE setting_value = :value_update');
+            $stmt->execute(['key' => $key, 'value' => $value, 'value_update' => $value]);
 
             echo json_encode(['success' => true]);
         } catch (Exception $e) {
@@ -428,18 +437,22 @@ if ($route === '/admin/services/custom') {
                 INSERT INTO service_custom (service_id, custom_rate, profit_margin, is_enabled, custom_description, updated_at) 
                 VALUES (:service_id, :custom_rate, :profit_margin, :is_enabled, :desc, NOW()) 
                 ON DUPLICATE KEY UPDATE 
-                custom_rate = :custom_rate,
-                profit_margin = :profit_margin,
-                is_enabled = :is_enabled,
-                custom_description = :desc,
+                custom_rate = :custom_rate_update,
+                profit_margin = :profit_margin_update,
+                is_enabled = :is_enabled_update,
+                custom_description = :desc_update,
                 updated_at = NOW()
             ');
             $stmt->execute([
-                'service_id'    => $serviceId,
-                'custom_rate'   => $customRate,
-                'profit_margin' => $profitMargin,
-                'is_enabled'    => $isEnabled,
-                'desc'          => $desc
+                'service_id'           => $serviceId,
+                'custom_rate'          => $customRate,
+                'profit_margin'        => $profitMargin,
+                'is_enabled'           => $isEnabled,
+                'desc'                 => $desc,
+                'custom_rate_update'   => $customRate,
+                'profit_margin_update' => $profitMargin,
+                'is_enabled_update'    => $isEnabled,
+                'desc_update'          => $desc
             ]);
 
             echo json_encode(['success' => true]);
