@@ -1,0 +1,250 @@
+<?php
+/**
+ * Application Core routes (/app/*)
+ */
+
+require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../auth.php';
+require_once __DIR__ . '/../notify.php';
+
+// Route: /app/heartbeat (GET)
+if ($route === '/app/heartbeat') {
+    echo json_encode(['ok' => 1]);
+    exit;
+}
+
+// Route: /app/log-init-data (POST)
+if ($route === '/app/log-init-data') {
+    echo json_encode(['success' => true]);
+    exit;
+}
+
+// Route: /app/settings (GET)
+if ($route === '/app/settings') {
+    try {
+        $stmt = $pdo->query('SELECT setting_key, setting_value FROM settings');
+        $rows = $stmt->fetchAll();
+        
+        $settings = [
+            'rateMultiplier' => 55.0,
+            'discountPercent' => 0.0,
+            'holidayName' => '',
+            'maintenanceMode' => false,
+            'userCanOrder' => true,
+            'marqueeText' => 'Welcome to Paxyo SMM!',
+            'topServicesIds' => []
+        ];
+        
+        foreach ($rows as $row) {
+            $key = $row['setting_key'];
+            $val = $row['setting_value'];
+            
+            if ($key === 'rate_multiplier') $settings['rateMultiplier'] = (float)$val ?: 55.0;
+            if ($key === 'discount_percent') $settings['discountPercent'] = (float)$val ?: 0.0;
+            if ($key === 'holiday_name') $settings['holidayName'] = $val;
+            if ($key === 'maintenance_mode') $settings['maintenanceMode'] = ($val === '1' || $val === 'true');
+            if ($key === 'user_can_order') $settings['userCanOrder'] = ($val === '1' || $val === 'true');
+            if ($key === 'marquee_text') $settings['marqueeText'] = $val;
+            if ($key === 'top_services_ids') {
+                $settings['topServicesIds'] = $val
+                    ? array_map('intval', explode(',', $val))
+                    : [];
+            }
+        }
+        
+        echo json_encode($settings);
+    } catch (Exception $e) {
+        echo json_encode([
+            'rateMultiplier' => 55.0,
+            'discountPercent' => 0.0,
+            'holidayName' => '',
+            'maintenanceMode' => false,
+            'userCanOrder' => true,
+            'marqueeText' => '',
+            'topServicesIds' => []
+        ]);
+    }
+    exit;
+}
+
+// Route: /app/recommended (GET)
+if ($route === '/app/recommended') {
+    try {
+        $stmt = $pdo->query('SELECT service_id FROM recommended_services');
+        $rows = $stmt->fetchAll();
+        $ids = [];
+        foreach ($rows as $r) {
+            $ids[] = (int)$r['service_id'];
+        }
+        echo json_encode($ids);
+    } catch (Exception $e) {
+        echo json_encode([]);
+    }
+    exit;
+}
+
+// Route: /app/alerts (POST)
+if ($route === '/app/alerts') {
+    $initData = isset($requestData['initData']) ? $requestData['initData'] : '';
+    $tgId = getTelegramUserId($initData);
+    
+    if (!$tgId) {
+        echo json_encode(['success' => false, 'unreadCount' => 0, 'alerts' => []]);
+        exit;
+    }
+    
+    try {
+        $stmt = $pdo->prepare('SELECT * FROM alerts WHERE user_id = :user_id ORDER BY created_at DESC LIMIT 50');
+        $stmt->execute(['user_id' => $tgId]);
+        $alerts = $stmt->fetchAll();
+        
+        $unreadCount = 0;
+        foreach ($alerts as &$a) {
+            $a['id'] = (int)$a['id'];
+            $a['is_read'] = (int)$a['is_read'];
+            if ($a['is_read'] === 0) {
+                $unreadCount++;
+            }
+        }
+        
+        echo json_encode(['success' => true, 'unreadCount' => $unreadCount, 'alerts' => $alerts]);
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'unreadCount' => 0, 'alerts' => []]);
+    }
+    exit;
+}
+
+// Route: /app/alerts/mark-read (POST)
+if ($route === '/app/alerts/mark-read') {
+    $initData = isset($requestData['initData']) ? $requestData['initData'] : '';
+    $tgId = getTelegramUserId($initData);
+    
+    if (!$tgId) {
+        echo json_encode(['success' => false]);
+        exit;
+    }
+    
+    try {
+        $stmt = $pdo->prepare('UPDATE alerts SET is_read = 1 WHERE user_id = :user_id');
+        $stmt->execute(['user_id' => $tgId]);
+        echo json_encode(['success' => true]);
+    } catch (Exception $e) {
+        echo json_encode(['success' => false]);
+    }
+    exit;
+}
+
+// Route: /app/auth (POST)
+if ($route === '/app/auth') {
+    $initData = isset($requestData['initData']) ? $requestData['initData'] : '';
+    $userIdFallback = isset($requestData['user_id']) ? $requestData['user_id'] : 'unauth_local_user';
+    
+    $tgUser = getTelegramUser($initData);
+    $tgId = $tgUser && isset($tgUser['id']) ? (string)$tgUser['id'] : null;
+    
+    if (!$tgId) {
+        $tgId = $userIdFallback;
+    }
+    
+    $firstName = $tgUser && isset($tgUser['first_name']) ? $tgUser['first_name'] : 'Local';
+    $lastName = $tgUser && isset($tgUser['last_name']) ? $tgUser['last_name'] : 'User';
+    $username = $tgUser && isset($tgUser['username']) ? $tgUser['username'] : 'local_user';
+    $photoUrl = $tgUser && isset($tgUser['photo_url']) ? $tgUser['photo_url'] : '';
+    
+    try {
+        // Look up user
+        $stmt = $pdo->prepare('SELECT * FROM auth WHERE tg_id = :tg_id');
+        $stmt->execute(['tg_id' => $tgId]);
+        $user = $stmt->fetch();
+        
+        if (!$user) {
+            // Generate a fresh unique referral code
+            $randomHex = strtoupper(bin2hex(random_bytes(3)));
+            $idSuffix = substr($tgId, -3);
+            $newRefCode = "REF{$randomHex}{$idSuffix}";
+            
+            $stmt = $pdo->prepare("
+                INSERT INTO auth (tg_id, username, first_name, last_name, photo_url, balance, auth_provider, last_login, referral_code) 
+                VALUES (:tg_id, :username, :first_name, :last_name, :photo_url, 0.00, 'telegram', NOW(), :referral_code)
+            ");
+            $stmt->execute([
+                'tg_id'         => $tgId,
+                'username'      => $username,
+                'first_name'    => $firstName,
+                'last_name'     => $lastName,
+                'photo_url'     => $photoUrl,
+                'referral_code' => $newRefCode
+            ]);
+            
+            // Notify Admin Bot Async/Parallel
+            try {
+                notifyNewUser($tgId, $firstName);
+            } catch (Exception $e) {}
+            
+            // Fetch newly created user
+            $stmt = $pdo->prepare('SELECT * FROM auth WHERE tg_id = :tg_id');
+            $stmt->execute(['tg_id' => $tgId]);
+            $user = $stmt->fetch();
+        } else {
+            // User exists, update referral code if missing
+            $refCode = isset($user['referral_code']) ? $user['referral_code'] : null;
+            if (empty($refCode)) {
+                $randomHex = strtoupper(bin2hex(random_bytes(3)));
+                $idSuffix = substr($tgId, -3);
+                $refCode = "REF{$randomHex}{$idSuffix}";
+                
+                $stmt = $pdo->prepare('UPDATE auth SET referral_code = :ref_code WHERE tg_id = :tg_id');
+                $stmt->execute(['ref_code' => $refCode, 'tg_id' => $tgId]);
+            }
+            
+            // Update last login details
+            $stmt = $pdo->prepare('
+                UPDATE auth 
+                SET username = :username, first_name = :first_name, last_name = :last_name, photo_url = :photo_url, last_login = NOW() 
+                WHERE tg_id = :tg_id
+            ');
+            $stmt->execute([
+                'username'   => $username,
+                'first_name' => $firstName,
+                'last_name'  => $lastName,
+                'photo_url'  => $photoUrl,
+                'tg_id'      => $tgId
+            ]);
+            
+            // Re-fetch updated user
+            $stmt = $pdo->prepare('SELECT * FROM auth WHERE tg_id = :tg_id');
+            $stmt->execute(['tg_id' => $tgId]);
+            $user = $stmt->fetch();
+        }
+        
+        $refers = [];
+        if (!empty($user['refers'])) {
+            $refers = is_string($user['refers']) ? json_decode($user['refers'], true) : $user['refers'];
+            if (!is_array($refers)) $refers = [];
+        }
+        
+        echo json_encode([
+            'success' => true,
+            'user' => [
+                'id'             => $user['tg_id'],
+                'tg_id'          => $user['tg_id'],
+                'username'       => !empty($user['username']) ? $user['username'] : $username,
+                'first_name'     => !empty($user['first_name']) ? $user['first_name'] : $firstName,
+                'last_name'      => !empty($user['last_name']) ? $user['last_name'] : $lastName,
+                'photo_url'      => !empty($user['photo_url']) ? $user['photo_url'] : $photoUrl,
+                'balance'        => (float)$user['balance'],
+                'role'           => isset($user['role']) ? $user['role'] : 'user',
+                'phone_number'   => isset($user['phone_number']) ? $user['phone_number'] : null,
+                'phone_verified' => !empty($user['phone_verified']),
+                'referral_code'  => $user['referral_code'],
+                'referred_by'    => isset($user['referred_by']) ? $user['referred_by'] : null,
+                'refers'         => $refers
+            ]
+        ]);
+        
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
