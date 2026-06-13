@@ -106,10 +106,11 @@ router.post('/users/balance', async (req, res) => {
         const [[user]] = await pool.execute('SELECT balance FROM auth WHERE tg_id = ?', [tg_id]);
 
         // Log the transaction
+        const txType = amount >= 0 ? 'bonus' : 'refund';
         await pool.execute(
             `INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, description, created_at)
-             VALUES (?, 'admin_adjustment', ?, ?, 'admin', 'Admin balance adjustment', NOW())`,
-            [tg_id, amount, user.balance]
+             VALUES (?, ?, ?, ?, 'admin', 'Admin balance adjustment', NOW())`,
+            [tg_id, txType, amount, user.balance]
         );
 
         return res.json({ success: true, newBalance: parseFloat(user.balance) });

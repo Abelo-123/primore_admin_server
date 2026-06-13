@@ -168,11 +168,12 @@ if ($route === '/admin/users/balance' && $method === 'POST') {
         $newBalance = (float)$user['balance'];
 
         // Log transaction
+        $txType = ($amount >= 0) ? 'bonus' : 'refund';
         $stmt = $pdo->prepare("
             INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, description, created_at)
-            VALUES (:tg_id, 'admin_adjustment', :amount, :balance_after, 'admin', 'Admin balance adjustment', NOW())
+            VALUES (:tg_id, :type, :amount, :balance_after, 'admin', 'Admin balance adjustment', NOW())
         ");
-        $stmt->execute(['tg_id' => $tgId, 'amount' => $amount, 'balance_after' => $newBalance]);
+        $stmt->execute(['tg_id' => $tgId, 'type' => $txType, 'amount' => $amount, 'balance_after' => $newBalance]);
 
         $pdo->commit();
 
