@@ -45,6 +45,20 @@ const app = express();
                 )
             `);
 
+            // Ensure withdrawals table exists
+            await conn.execute(`
+                CREATE TABLE IF NOT EXISTS withdrawals (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id VARCHAR(255) NOT NULL,
+                    amount DECIMAL(10, 2) NOT NULL,
+                    full_name VARCHAR(255) NOT NULL,
+                    bank_name VARCHAR(255) NOT NULL,
+                    account_number VARCHAR(255) NOT NULL,
+                    status VARCHAR(50) DEFAULT 'pending',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            `);
+
             // Ensure custom_description column exists in service_custom
             try {
                 await conn.execute('ALTER TABLE service_custom ADD COLUMN custom_description TEXT');

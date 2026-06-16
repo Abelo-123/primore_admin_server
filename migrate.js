@@ -204,6 +204,21 @@ async function migrate() {
             console.log('Added INDEX to service_custom(service_id)');
         } catch (e) {}
 
+        // 10. Ensure `withdrawals` table exists
+        const createWithdrawals = `
+        CREATE TABLE IF NOT EXISTS withdrawals (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            amount DECIMAL(10, 2) NOT NULL,
+            full_name VARCHAR(255) NOT NULL,
+            bank_name VARCHAR(255) NOT NULL,
+            account_number VARCHAR(255) NOT NULL,
+            status VARCHAR(50) DEFAULT 'pending',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`;
+        await conn.execute(createWithdrawals);
+        console.log('Withdrawals table checked/created.');
+
         conn.release();
         console.log('--- Migration & Optimization Complete! ---');
         process.exit(0);

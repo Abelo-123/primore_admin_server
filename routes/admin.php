@@ -6,6 +6,24 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../auth.php';
 
+// Auto-create withdrawals table if it does not exist
+try {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS withdrawals (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            amount DECIMAL(10, 2) NOT NULL,
+            full_name VARCHAR(255) NOT NULL,
+            bank_name VARCHAR(255) NOT NULL,
+            account_number VARCHAR(255) NOT NULL,
+            status VARCHAR(50) DEFAULT 'pending',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ");
+} catch (PDOException $e) {
+    // Fail silently
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 
 // Helper to sanitize database output types
