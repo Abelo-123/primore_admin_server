@@ -13,8 +13,16 @@ function formatOrderRow($row) {
     if (isset($row['id'])) $row['id'] = (int)$row['id'];
     if (isset($row['service_id'])) $row['service_id'] = (int)$row['service_id'];
     if (isset($row['quantity'])) $row['quantity'] = (int)$row['quantity'];
-    if (isset($row['cost'])) $row['cost'] = (float)$row['cost'];
-    if (isset($row['charge'])) $row['charge'] = (float)$row['charge'];
+    
+    $val = 0.0;
+    if (isset($row['cost']) && $row['cost'] !== null) {
+        $val = (float)$row['cost'];
+    } elseif (isset($row['charge']) && $row['charge'] !== null) {
+        $val = (float)$row['charge'];
+    }
+    $row['cost'] = $val;
+    $row['charge'] = $val;
+    
     if (isset($row['start_count'])) $row['start_count'] = (int)$row['start_count'];
     if (isset($row['remains'])) $row['remains'] = (int)$row['remains'];
     return $row;
@@ -91,13 +99,24 @@ if ($route === '/admin/users' && $method === 'GET') {
 
         $whereClause = '';
         $params = [];
+        $conditions = [];
 
         if (!empty($search)) {
-            $whereClause = 'WHERE tg_id LIKE :s1 OR username LIKE :s2 OR first_name LIKE :s3 OR last_name LIKE :s4';
+            $conditions[] = '(tg_id LIKE :s1 OR username LIKE :s2 OR first_name LIKE :s3 OR last_name LIKE :s4)';
             $params['s1'] = "%{$search}%";
             $params['s2'] = "%{$search}%";
             $params['s3'] = "%{$search}%";
             $params['s4'] = "%{$search}%";
+        }
+
+        $username = isset($requestData['username']) ? $requestData['username'] : '';
+        if (!empty($username)) {
+            $conditions[] = 'username LIKE :username';
+            $params['username'] = "%{$username}%";
+        }
+
+        if (!empty($conditions)) {
+            $whereClause = 'WHERE ' . implode(' AND ', $conditions);
         }
 
         $validSortColumns = [
@@ -665,6 +684,113 @@ if ($route === '/admin/withdrawals/approve' && $method === 'POST') {
         if ($pdo->inTransaction()) $pdo->rollBack();
         http_response_code(500);
         echo json_encode(['error' => 'Failed to approve withdrawal', 'details' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// ─── ROUTE: /admin/finance-stats (GET) ───────────────────────────
+if ($route === '/admin/finance-stats' && $method === 'GET') {
+    try {
+        // 1. Revenues
+        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success')");
+        $totalRevenue = (float)$stmt->fetch()['totalRevenue'];
+
+        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as todayRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= CURDATE()");
+        $todayRevenue = (float)$stmt->fetch()['todayRevenue'];
+
+        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as weeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        $weeklyRevenue = (float)$stmt->fetch()['weeklyRevenue'];
+
+        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as monthlyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
+        $monthlyRevenue = (float)$stmt->fetch()['monthlyRevenue'];
+
+        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as prevWeeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        $prevWeeklyRevenue = (float)$stmt->fetch()['prevWeeklyRevenue'];
+
+        // 2. Withdrawals
+        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as totalWithdrawn FROM withdrawals WHERE status = 'done'");
+        $totalWithdrawn = (float)$stmt->fetch()['totalWithdrawn'];
+
+        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as todayWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= CURDATE()");
+        $todayWithdrawals = (float)$stmt->fetch()['todayWithdrawals'];
+
+        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as weeklyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        $weeklyWithdrawals = (float)$stmt->fetch()['weeklyWithdrawals'];
+
+        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as monthlyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
+        $monthlyWithdrawals = (float)$stmt->fetch()['monthlyWithdrawals'];
+
+        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as pendingWithdrawals FROM withdrawals WHERE status = 'pending'");
+        $pendingWithdrawals = (float)$stmt->fetch()['pendingWithdrawals'];
+
+        $stmt = $pdo->query("SELECT COUNT(*) as totalWithdrawalsCount FROM withdrawals");
+        $totalWithdrawalsCount = (int)$stmt->fetch()['totalWithdrawalsCount'];
+
+        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as totalWithdrawalsSum FROM withdrawals");
+        $totalWithdrawalsSum = (float)$stmt->fetch()['totalWithdrawalsSum'];
+
+        // 3. Wallet Balance
+        $stmt = $pdo->query("SELECT COALESCE(SUM(balance), 0) as withdrawableBalance FROM auth");
+        $withdrawableBalance = (float)$stmt->fetch()['withdrawableBalance'];
+
+        // 4. Paying Users
+        $stmt = $pdo->query("SELECT COUNT(DISTINCT user_id) as totalPayingUsers FROM deposits WHERE status IN ('completed', 'success')");
+        $totalPayingUsers = (int)$stmt->fetch()['totalPayingUsers'];
+
+        // 5. Provider Costs
+        $stmt = $pdo->query("
+            SELECT o.*, sc.profit_margin, sc.custom_rate 
+            FROM orders o 
+            LEFT JOIN service_custom sc ON o.service_id = sc.service_id
+        ");
+        $orders = $stmt->fetchAll();
+        $providerCosts = 0.0;
+        foreach ($orders as $o) {
+            $costVal = isset($o['cost']) && $o['cost'] !== null ? $o['cost'] : (isset($o['charge']) ? $o['charge'] : 0.0);
+            $cost = (float)$costVal;
+            if ($cost <= 0) continue;
+
+            $margin = isset($o['profit_margin']) ? (float)$o['profit_margin'] : 0.0;
+            $customRate = isset($o['custom_rate']) && $o['custom_rate'] !== null ? (float)$o['custom_rate'] : null;
+
+            if ($margin > 0) {
+                $providerCosts += $cost / (1 + $margin / 100);
+            } elseif ($customRate !== null && $customRate > 0) {
+                $providerCosts += $cost * 0.80;
+            } else {
+                $providerCosts += $cost / 1.15;
+            }
+        }
+
+        // 6. Growth
+        $revenueGrowth = 0.0;
+        if ($prevWeeklyRevenue > 0) {
+            $revenueGrowth = (($weeklyRevenue - $prevWeeklyRevenue) / $prevWeeklyRevenue) * 100;
+        } elseif ($weeklyRevenue > 0) {
+            $revenueGrowth = 100.0;
+        }
+
+        echo json_encode([
+            'success'               => true,
+            'totalRevenue'          => $totalRevenue,
+            'todayRevenue'          => $todayRevenue,
+            'weeklyRevenue'         => $weeklyRevenue,
+            'monthlyRevenue'        => $monthlyRevenue,
+            'totalWithdrawn'        => $totalWithdrawn,
+            'todayWithdrawals'      => $todayWithdrawals,
+            'weeklyWithdrawals'     => $weeklyWithdrawals,
+            'monthlyWithdrawals'    => $monthlyWithdrawals,
+            'withdrawableBalance'   => $withdrawableBalance,
+            'pendingWithdrawals'    => $pendingWithdrawals,
+            'totalWithdrawals'      => $totalWithdrawalsSum,
+            'totalWithdrawalsCount' => $totalWithdrawalsCount,
+            'totalPayingUsers'      => $totalPayingUsers,
+            'providerCosts'         => round($providerCosts, 2),
+            'revenueGrowth'         => round($revenueGrowth, 1)
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Failed to load finance stats', 'details' => $e->getMessage()]);
     }
     exit;
 }

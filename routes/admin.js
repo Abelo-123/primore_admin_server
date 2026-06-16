@@ -35,12 +35,21 @@ router.get('/dashboard', async (req, res) => {
             ORDER BY d.created_at DESC LIMIT 10
         `);
 
+        const formattedRecentOrders = recentOrders.map(o => {
+            const val = o.cost !== undefined && o.cost !== null ? parseFloat(o.cost) : (o.charge !== undefined && o.charge !== null ? parseFloat(o.charge) : 0);
+            return {
+                ...o,
+                cost: val,
+                charge: val
+            };
+        });
+
         return res.json({
             totalUsers: Number(totalUsers),
             totalOrders: Number(totalOrders),
             totalDeposits: Number(totalDeposits),
             totalRevenue: Number(totalRevenue),
-            recentOrders,
+            recentOrders: formattedRecentOrders,
             recentDeposits,
         });
     } catch (err) {
@@ -61,11 +70,22 @@ router.get('/users', async (req, res) => {
 
         let whereClause = '';
         let params = [];
+        const conditions = [];
 
         if (search) {
-            whereClause = 'WHERE tg_id LIKE ? OR username LIKE ? OR first_name LIKE ? OR last_name LIKE ?';
+            conditions.push('(tg_id LIKE ? OR username LIKE ? OR first_name LIKE ? OR last_name LIKE ?)');
             const s = `%${search}%`;
-            params = [s, s, s, s];
+            params.push(s, s, s, s);
+        }
+
+        const username = req.query.username || '';
+        if (username) {
+            conditions.push('username LIKE ?');
+            params.push(`%${username}%`);
+        }
+
+        if (conditions.length > 0) {
+            whereClause = 'WHERE ' + conditions.join(' AND ');
         }
 
         const validSortColumns = {
@@ -202,7 +222,16 @@ router.get('/orders', async (req, res) => {
             [...params, String(limit), String(offset)]
         );
 
-        return res.json({ orders, total: Number(total) });
+        const formattedOrders = orders.map(o => {
+            const val = o.cost !== undefined && o.cost !== null ? parseFloat(o.cost) : (o.charge !== undefined && o.charge !== null ? parseFloat(o.charge) : 0);
+            return {
+                ...o,
+                cost: val,
+                charge: val
+            };
+        });
+
+        return res.json({ orders: formattedOrders, total: Number(total) });
     } catch (err) {
         console.error('[admin/orders]', err);
         return res.status(500).json({ error: 'Failed to load orders' });
@@ -490,6 +519,94 @@ router.post('/withdrawals/approve', async (req, res) => {
     } catch (err) {
         console.error('[admin/withdrawals/approve]', err);
         return res.status(500).json({ error: 'Failed to approve withdrawal' });
+    }
+});
+
+// ─── ROUTE: /admin/finance-stats (GET) ───────────────────────────
+router.get('/finance-stats', async (req, res) => {
+    try {
+        // 1. Revenues (completed deposits)
+        const [[{ totalRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success')");
+        const [[{ todayRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as todayRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= CURDATE()");
+        const [[{ weeklyRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as weeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        const [[{ monthlyRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as monthlyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
+
+        // Previous week's revenue (for growth %)
+        const [[{ prevWeeklyRevenue }]] = await pool.execute(
+            "SELECT COALESCE(SUM(amount), 0) as prevWeeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)"
+        );
+
+        // 2. Withdrawals
+        const [[{ totalWithdrawn }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalWithdrawn FROM withdrawals WHERE status = 'done'");
+        const [[{ todayWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as todayWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= CURDATE()");
+        const [[{ weeklyWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as weeklyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        const [[{ monthlyWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as monthlyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
+        const [[{ pendingWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as pendingWithdrawals FROM withdrawals WHERE status = 'pending'");
+        const [[{ totalWithdrawalsCount }]] = await pool.execute("SELECT COUNT(*) as totalWithdrawalsCount FROM withdrawals");
+        const [[{ totalWithdrawalsSum }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalWithdrawalsSum FROM withdrawals");
+
+        // 3. Wallet / Withdrawable Balance
+        const [[{ withdrawableBalance }]] = await pool.execute("SELECT COALESCE(SUM(balance), 0) as withdrawableBalance FROM auth");
+
+        // 4. Paying Users
+        const [[{ totalPayingUsers }]] = await pool.execute("SELECT COUNT(DISTINCT user_id) as totalPayingUsers FROM deposits WHERE status IN ('completed', 'success')");
+
+        // 5. Provider Costs (estimate based on profit margin / custom rates)
+        const [orders] = await pool.execute(`
+            SELECT o.*, sc.profit_margin, sc.custom_rate 
+            FROM orders o 
+            LEFT JOIN service_custom sc ON o.service_id = sc.service_id
+        `);
+
+        let providerCosts = 0;
+        orders.forEach(o => {
+            const costVal = o.cost !== undefined && o.cost !== null ? o.cost : o.charge;
+            const cost = costVal ? parseFloat(costVal) : 0;
+            if (cost <= 0) return;
+
+            const margin = o.profit_margin ? parseFloat(o.profit_margin) : 0;
+            const customRate = o.custom_rate ? parseFloat(o.custom_rate) : null;
+
+            if (margin > 0) {
+                providerCosts += cost / (1 + margin / 100);
+            } else if (customRate !== null && customRate > 0) {
+                providerCosts += cost * 0.80; // default 20% margin for custom rates
+            } else {
+                providerCosts += cost / 1.15; // default 15% markup
+            }
+        });
+
+        // 6. Growth calculation
+        const thisWeek = parseFloat(weeklyRevenue);
+        const prevWeek = parseFloat(prevWeeklyRevenue);
+        let revenueGrowth = 0;
+        if (prevWeek > 0) {
+            revenueGrowth = ((thisWeek - prevWeek) / prevWeek) * 100;
+        } else if (thisWeek > 0) {
+            revenueGrowth = 100;
+        }
+
+        return res.json({
+            success: true,
+            totalRevenue: parseFloat(totalRevenue),
+            todayRevenue: parseFloat(todayRevenue),
+            weeklyRevenue: parseFloat(weeklyRevenue),
+            monthlyRevenue: parseFloat(monthlyRevenue),
+            totalWithdrawn: parseFloat(totalWithdrawn),
+            todayWithdrawals: parseFloat(todayWithdrawals),
+            weeklyWithdrawals: parseFloat(weeklyWithdrawals),
+            monthlyWithdrawals: parseFloat(monthlyWithdrawals),
+            withdrawableBalance: parseFloat(withdrawableBalance),
+            pendingWithdrawals: parseFloat(pendingWithdrawals),
+            totalWithdrawals: parseFloat(totalWithdrawalsSum),
+            totalWithdrawalsCount: parseInt(totalWithdrawalsCount),
+            totalPayingUsers: parseInt(totalPayingUsers),
+            providerCosts: parseFloat(providerCosts.toFixed(2)),
+            revenueGrowth: parseFloat(revenueGrowth.toFixed(1))
+        });
+    } catch (err) {
+        console.error('[admin/finance-stats]', err);
+        return res.status(500).json({ error: 'Failed to load finance stats' });
     }
 });
 

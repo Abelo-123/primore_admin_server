@@ -326,7 +326,16 @@ if ($route === '/orders/list') {
             $r['service_id'] = (int)$r['service_id'];
             $r['api_order_id'] = (int)$r['api_order_id'];
             $r['quantity'] = (int)$r['quantity'];
-            $r['cost'] = (float)$r['cost'];
+            
+            $val = 0.0;
+            if (isset($r['cost']) && $r['cost'] !== null) {
+                $val = (float)$r['cost'];
+            } elseif (isset($r['charge']) && $r['charge'] !== null) {
+                $val = (float)$r['charge'];
+            }
+            $r['cost'] = $val;
+            $r['charge'] = $val;
+            
             $r['start_count'] = (int)$r['start_count'];
             $r['remains'] = (int)$r['remains'];
         }

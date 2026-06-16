@@ -140,7 +140,15 @@ router.post('/list', async (req, res) => {
             'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 100',
             [tgId]
         );
-        return res.json({ success: true, orders: rows });
+        const formattedRows = rows.map(o => {
+            const val = o.cost !== undefined && o.cost !== null ? parseFloat(o.cost) : (o.charge !== undefined && o.charge !== null ? parseFloat(o.charge) : 0);
+            return {
+                ...o,
+                cost: val,
+                charge: val
+            };
+        });
+        return res.json({ success: true, orders: formattedRows });
     } catch (err) {
         console.error(err);
         return res.json({ success: false, orders: [] });
