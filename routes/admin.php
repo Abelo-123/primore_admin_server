@@ -884,30 +884,44 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
 
         if ($target === 'all') {
             // Broadcast to all users
-            $stmt = $pdo->query('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL');
+            $stmt = $pdo->query('SELECT tg_id, first_name, username FROM auth WHERE tg_id IS NOT NULL');
             $users = $stmt->fetchAll();
             
-            $successCount = 0;
-            $failCount = 0;
+            $results = [];
             
             foreach ($users as $user) {
+                $personalizedText = $message ?: '';
+                $firstName = !empty($user['first_name']) ? $user['first_name'] : 'User';
+                $username = !empty($user['username']) ? '@' . $user['username'] : '';
+                $displayName = trim($firstName . ' ' . $username);
+                if (empty($displayName)) {
+                    $displayName = 'User ' . $user['tg_id'];
+                }
+                
+                $personalizedText = str_ireplace('{name}', $firstName, $personalizedText);
+                $personalizedText = str_ireplace('{first_name}', $firstName, $personalizedText);
+                
                 try {
-                    $personalizedText = $message ?: '';
-                    $firstName = !empty($user['first_name']) ? $user['first_name'] : 'User';
-                    $personalizedText = str_ireplace('{name}', $firstName, $personalizedText);
-                    $personalizedText = str_ireplace('{first_name}', $firstName, $personalizedText);
-                    
                     sendTelegramMessagePHP($user['tg_id'], $personalizedText, $imageUrl);
-                    $successCount++;
+                    $results[] = [
+                        'tg_id' => $user['tg_id'],
+                        'name' => $displayName,
+                        'status' => 'success'
+                    ];
                 } catch (Exception $e) {
                     error_log("Failed to send Telegram message to {$user['tg_id']}: " . $e->getMessage());
-                    $failCount++;
+                    $results[] = [
+                        'tg_id' => $user['tg_id'],
+                        'name' => $displayName,
+                        'status' => 'failed',
+                        'error' => $e->getMessage()
+                    ];
                 }
             }
 
             echo json_encode([
                 'success' => true, 
-                'message' => "Broadcast complete. Sent to {$successCount} users, failed for {$failCount} users."
+                'results' => $results
             ]);
         } else {
             // Send to a single user

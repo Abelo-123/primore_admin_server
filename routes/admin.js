@@ -685,29 +685,40 @@ router.post('/send-telegram', async (req, res) => {
 
         if (target === 'all') {
             // Broadcast to all users
-            const [users] = await pool.execute('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL');
+            const [users] = await pool.execute('SELECT tg_id, first_name, username FROM auth WHERE tg_id IS NOT NULL');
             
-            let successCount = 0;
-            let failCount = 0;
+            const results = [];
             
             // Loop through users and send message
             for (const user of users) {
+                const personalizedText = message || '';
+                const firstName = user.first_name || 'User';
+                const username = user.username ? `@${user.username}` : '';
+                const displayName = `${firstName} ${username}`.trim() || `User ${user.tg_id}`;
+                
+                const finalMsg = personalizedText
+                    .replace(/{name}/gi, firstName)
+                    .replace(/{first_name}/gi, firstName);
+                
                 try {
-                    let personalizedText = message || '';
-                    const firstName = user.first_name || 'User';
-                    personalizedText = personalizedText
-                        .replace(/{name}/gi, firstName)
-                        .replace(/{first_name}/gi, firstName);
-                    
-                    await sendTelegram(user.tg_id, personalizedText, imageUrl);
-                    successCount++;
+                    await sendTelegram(user.tg_id, finalMsg, imageUrl);
+                    results.push({
+                        tg_id: user.tg_id,
+                        name: displayName,
+                        status: 'success'
+                    });
                 } catch (err) {
                     console.error(`Failed to send Telegram message to ${user.tg_id}:`, err.message);
-                    failCount++;
+                    results.push({
+                        tg_id: user.tg_id,
+                        name: displayName,
+                        status: 'failed',
+                        error: err.message
+                    });
                 }
             }
 
-            return res.json({ success: true, message: `Broadcast complete. Sent to ${successCount} users, failed for ${failCount} users.` });
+            return res.json({ success: true, results });
         } else {
             // Send to a single user
             // Get user's first name for personalization if target is a tg_id
