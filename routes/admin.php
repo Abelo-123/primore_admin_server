@@ -26,6 +26,36 @@ try {
 
 $method = $_SERVER['REQUEST_METHOD'];
 
+// Check auth
+$authHeader = isset($_SERVER['HTTP_AUTHORIZATION']) ? $_SERVER['HTTP_AUTHORIZATION'] : '';
+$adminPass = getEnvVar('ADMIN_PASSWORD', 'paxyo2026');
+
+$providedPass = '';
+if (preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
+    $providedPass = $matches[1];
+}
+
+// ─── ROUTE: /admin/login (POST) ─────────────────────────────────
+if ($route === '/admin/login' && $method === 'POST') {
+    $password = isset($requestData['password']) ? $requestData['password'] : '';
+    if ($password === $adminPass) {
+        echo json_encode(['success' => true, 'token' => $adminPass]);
+    } else {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'error' => 'Invalid password']);
+    }
+    exit;
+}
+
+if ($route !== '/admin/login') {
+    if (empty($providedPass) || $providedPass !== $adminPass) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Unauthorized']);
+        exit;
+    }
+}
+
+
 // Helper to sanitize database output types
 function formatOrderRow($row) {
     if (isset($row['id'])) $row['id'] = (int)$row['id'];

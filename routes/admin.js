@@ -13,6 +13,39 @@ import pool from '../config/database.js';
 
 const router = Router();
 
+// Middleware to check admin password auth
+router.use((req, res, next) => {
+    if (req.path === '/login') {
+        return next();
+    }
+
+    const authHeader = req.headers.authorization || '';
+    const adminPass = process.env.ADMIN_PASSWORD || 'paxyo2026';
+    
+    let providedPass = '';
+    const match = authHeader.match(/Bearer\s+(.*)$/i);
+    if (match) {
+        providedPass = match[1];
+    }
+
+    if (!providedPass || providedPass !== adminPass) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+});
+
+// Login endpoint
+router.post('/login', (req, res) => {
+    const { password } = req.body;
+    const adminPass = process.env.ADMIN_PASSWORD || 'paxyo2026';
+    if (password === adminPass) {
+        return res.json({ success: true, token: adminPass });
+    } else {
+        return res.status(401).json({ success: false, error: 'Invalid password' });
+    }
+});
+
+
 // ─── Dashboard ──────────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
     try {
