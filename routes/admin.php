@@ -939,44 +939,7 @@ function sendTelegramMessagePHP($tgId, $message, $imageUrl) {
 
     return $body;
 }
-;
-}
-co-cannoli-596080.netlify.app/'
-                    ]
-                ]
-            ]
-        ]
-    ];
 
-    if (!empty($imageUrl)) {
-        $url = "https://api.telegram.org/bot{$token}/sendPhoto";
-        $payload = [
-            'chat_id' => (string)$tgId,
-            'photo' => $imageUrl,
-            'parse_mode' => 'HTML',
-            'reply_markup' => $replyMarkup
-        ];
-        if (!empty($message)) {
-            $payload['caption'] = $message;
-        }
-    } else {
-        $url = "https://api.telegram.org/bot{$token}/sendMessage";
-        $payload = [
-            'chat_id' => (string)$tgId,
-            'text' => $message ?: '',
-            'parse_mode' => 'HTML',
-            'reply_markup' => $replyMarkup
-        ];
-    }
-
-
-    $res = curlRequest('POST', $url, ['Content-Type: application/json'], json_encode($payload), 10);
-    if ($res['code'] < 200 || $res['code'] >= 300) {
-        throw new Exception("Telegram API Error: Status {$res['code']} - {$res['body']} {$res['error']}");
-    }
-
-    return json_decode($res['body'], true);
-}
 
 // ─── ROUTE: /admin/send-telegram (POST) ─────────────────────────
 if ($route === '/admin/send-telegram' && $method === 'POST') {
