@@ -610,4 +610,112 @@ router.get('/finance-stats', async (req, res) => {
     }
 });
 
+// Helper to send Telegram message
+async function sendTelegram(tgId, message, imageUrl) {
+    const token = process.env.BOT_TOKEN || '7547947738:AAFCrTdxp5EmLg5f39rrKn8kO5kLhA0Tekw';
+    if (!token) {
+        throw new Error('BOT_TOKEN is not configured');
+    }
+    
+    let url;
+    let body;
+    if (imageUrl) {
+        url = `https://api.telegram.org/bot${token}/sendPhoto`;
+        body = {
+            chat_id: String(tgId),
+            photo: imageUrl,
+            parse_mode: 'HTML'
+        };
+        if (message) {
+            body.caption = message;
+        }
+    } else {
+        url = `https://api.telegram.org/bot${token}/sendMessage`;
+        body = {
+            chat_id: String(tgId),
+            text: message || '',
+            parse_mode: 'HTML'
+        };
+    }
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Telegram API Error: ${response.status} - ${errText}`);
+    }
+
+    return await response.json();
+}
+
+// ─── Send Telegram Route ──────────────────────────────────────────
+router.post('/send-telegram', async (req, res) => {
+    try {
+        const { target, message, imageUrl } = req.body;
+
+        if (!message && !imageUrl) {
+            return res.status(400).json({ error: 'Either message or imageUrl is required' });
+        }
+
+        if (!target) {
+            return res.status(400).json({ error: 'Target is required' });
+        }
+
+        if (target === 'all') {
+            // Broadcast to all users
+            const [users] = await pool.execute('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL');
+            
+            let successCount = 0;
+            let failCount = 0;
+            
+            // Loop through users and send message
+            for (const user of users) {
+                try {
+                    let personalizedText = message || '';
+                    const firstName = user.first_name || 'User';
+                    personalizedText = personalizedText
+                        .replace(/{name}/gi, firstName)
+                        .replace(/{first_name}/gi, firstName);
+                    
+                    await sendTelegram(user.tg_id, personalizedText, imageUrl);
+                    successCount++;
+                } catch (err) {
+                    console.error(`Failed to send Telegram message to ${user.tg_id}:`, err.message);
+                    failCount++;
+                }
+            }
+
+            return res.json({ success: true, message: `Broadcast complete. Sent to ${successCount} users, failed for ${failCount} users.` });
+        } else {
+            // Send to a single user
+            // Get user's first name for personalization if target is a tg_id
+            let personalizedText = message || '';
+            try {
+                const [rows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? LIMIT 1', [target]);
+                if (rows.length > 0) {
+                    const firstName = rows[0].first_name || 'User';
+                    personalizedText = personalizedText
+                        .replace(/{name}/gi, firstName)
+                        .replace(/{first_name}/gi, firstName);
+                }
+            } catch (dbErr) {
+                console.error('Failed to fetch user for personalization:', dbErr.message);
+            }
+
+            await sendTelegram(target, personalizedText, imageUrl);
+            return res.json({ success: true });
+        }
+    } catch (err) {
+        console.error('[admin/send-telegram]', err);
+        return res.status(500).json({ error: err.message || 'Failed to send Telegram message' });
+    }
+});
+
 export default router;
+
