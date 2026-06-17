@@ -812,3 +812,110 @@ if ($route === '/admin/finance-stats' && $method === 'GET') {
     }
     exit;
 }
+
+// Helper to send Telegram message in PHP
+function sendTelegramMessagePHP($tgId, $message, $imageUrl) {
+    $token = getEnvVar('BOT_TOKEN', '7547947738:AAFCrTdxp5EmLg5f39rrKn8kO5kLhA0Tekw');
+    if (empty($token)) {
+        throw new Exception('BOT_TOKEN is not configured');
+    }
+
+    if (!empty($imageUrl)) {
+        $url = "https://api.telegram.org/bot{$token}/sendPhoto";
+        $payload = [
+            'chat_id' => (string)$tgId,
+            'photo' => $imageUrl,
+            'parse_mode' => 'HTML'
+        ];
+        if (!empty($message)) {
+            $payload['caption'] = $message;
+        }
+    } else {
+        $url = "https://api.telegram.org/bot{$token}/sendMessage";
+        $payload = [
+            'chat_id' => (string)$tgId,
+            'text' => $message ?: '',
+            'parse_mode' => 'HTML'
+        ];
+    }
+
+    $res = curlRequest('POST', $url, ['Content-Type: application/json'], json_encode($payload), 10);
+    if ($res['code'] < 200 || $res['code'] >= 300) {
+        throw new Exception("Telegram API Error: Status {$res['code']} - {$res['body']} {$res['error']}");
+    }
+
+    return json_decode($res['body'], true);
+}
+
+// ─── ROUTE: /admin/send-telegram (POST) ─────────────────────────
+if ($route === '/admin/send-telegram' && $method === 'POST') {
+    try {
+        $target = isset($requestData['target']) ? $requestData['target'] : null;
+        $message = isset($requestData['message']) ? $requestData['message'] : null;
+        $imageUrl = isset($requestData['imageUrl']) ? $requestData['imageUrl'] : null;
+
+        if (empty($message) && empty($imageUrl)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Either message or imageUrl is required']);
+            exit;
+        }
+
+        if (empty($target)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Target is required']);
+            exit;
+        }
+
+        if ($target === 'all') {
+            // Broadcast to all users
+            $stmt = $pdo->query('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL');
+            $users = $stmt->fetchAll();
+            
+            $successCount = 0;
+            $failCount = 0;
+            
+            foreach ($users as $user) {
+                try {
+                    $personalizedText = $message ?: '';
+                    $firstName = !empty($user['first_name']) ? $user['first_name'] : 'User';
+                    $personalizedText = str_ireplace('{name}', $firstName, $personalizedText);
+                    $personalizedText = str_ireplace('{first_name}', $firstName, $personalizedText);
+                    
+                    sendTelegramMessagePHP($user['tg_id'], $personalizedText, $imageUrl);
+                    $successCount++;
+                } catch (Exception $e) {
+                    error_log("Failed to send Telegram message to {$user['tg_id']}: " . $e->getMessage());
+                    $failCount++;
+                }
+            }
+
+            echo json_encode([
+                'success' => true, 
+                'message' => "Broadcast complete. Sent to {$successCount} users, failed for {$failCount} users."
+            ]);
+        } else {
+            // Send to a single user
+            $personalizedText = $message ?: '';
+            try {
+                $stmt = $pdo->prepare('SELECT first_name FROM auth WHERE tg_id = :tg_id LIMIT 1');
+                $stmt->execute(['tg_id' => $target]);
+                $user = $stmt->fetch();
+                if ($user) {
+                    $firstName = !empty($user['first_name']) ? $user['first_name'] : 'User';
+                    $personalizedText = str_ireplace('{name}', $firstName, $personalizedText);
+                    $personalizedText = str_ireplace('{first_name}', $firstName, $personalizedText);
+                }
+            } catch (Exception $dbErr) {
+                error_log("Failed to fetch user for personalization: " . $dbErr->getMessage());
+            }
+
+            sendTelegramMessagePHP($target, $personalizedText, $imageUrl);
+            echo json_encode(['success' => true]);
+        }
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit;
+}
+
