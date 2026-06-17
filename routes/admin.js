@@ -918,11 +918,9 @@ router.get('/broadcasts', async (req, res) => {
     try {
         const [rows] = await pool.execute(`
             SELECT b.*, 
-                   COALESCE(SUM(CASE WHEN bm.status = 'sent' THEN 1 ELSE 0 END), 0) as sent_count,
-                   COALESCE(SUM(CASE WHEN bm.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'sent') as sent_count,
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'failed') as failed_count
             FROM broadcasts b
-            LEFT JOIN broadcast_messages bm ON b.id = bm.broadcast_id
-            GROUP BY b.id
             ORDER BY b.created_at DESC
         `);
         return res.json(rows);
