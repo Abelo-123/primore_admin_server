@@ -1127,13 +1127,13 @@ function deleteTelegramMessagePHP($tgId, $messageId) {
 // ─── ROUTE: /admin/broadcasts (GET) ─────────────────────────────
 if ($route === '/admin/broadcasts' && $method === 'GET') {
     try {
-        $stmt = $pdo->query('
+        $stmt = $pdo->query("
             SELECT b.*, 
-                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = "sent") as sent_count,
-                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = "failed") as failed_count
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'sent') as sent_count,
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'failed') as failed_count
             FROM broadcasts b
             ORDER BY b.created_at DESC
-        ');
+        ");
         $rows = $stmt->fetchAll();
         foreach ($rows as &$r) {
             $r['id'] = (int)$r['id'];
