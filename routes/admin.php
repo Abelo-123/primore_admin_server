@@ -1242,7 +1242,7 @@ if (strpos($route, '/admin/broadcasts/') === 0) {
                 $stmt = $pdo->prepare('UPDATE broadcasts SET message = :msg, image_url = :img WHERE id = :id');
                 $stmt->execute(['msg' => $newMessage, 'img' => $newImageUrl, 'id' => $broadcastId]);
 
-                $stmt = $pdo->prepare('SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = :id AND status = "sent"');
+                $stmt = $pdo->prepare("SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = :id AND status = 'sent'");
                 $stmt->execute(['id' => $broadcastId]);
                 $messages = $stmt->fetchAll();
 
@@ -1280,7 +1280,7 @@ if (strpos($route, '/admin/broadcasts/') === 0) {
 
         if ($method === 'DELETE') {
             try {
-                $stmt = $pdo->prepare('SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = :id AND status = "sent"');
+                $stmt = $pdo->prepare("SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = :id AND status = 'sent'");
                 $stmt->execute(['id' => $broadcastId]);
                 $messages = $stmt->fetchAll();
 
