@@ -654,9 +654,9 @@ async function sendTelegram(tgId, message, imageUrl) {
         inline_keyboard: [
             [
                 {
-                    text: 'Start App',
+                    text: 'Open App 🎵',
                     web_app: {
-                        url: 'https://rococo-cannoli-596080.netlify.app/'
+                        url: 'https://musical-caramel-cae47e.netlify.app/'
                     }
                 }
             ]
@@ -700,7 +700,12 @@ async function sendTelegram(tgId, message, imageUrl) {
         throw new Error(`Telegram API Error: ${response.status} - ${errText}`);
     }
 
-    return await response.json();
+    const resJson = await response.json();
+    if (!resJson.ok) {
+        throw new Error(`Telegram API Error: ${resJson.description || 'Unknown error'}`);
+    }
+
+    return resJson;
 }
 
 // ─── Send Telegram Route ──────────────────────────────────────────
@@ -847,7 +852,12 @@ async function sendBroadcastMessage(tgId, message, imageUrl, btnText = 'Open App
         throw new Error(`Telegram API Error: ${response.status} - ${errText}`);
     }
 
-    return await response.json();
+    const resJson = await response.json();
+    if (!resJson.ok) {
+        throw new Error(`Telegram API Error: ${resJson.description || 'Unknown error'}`);
+    }
+
+    return resJson;
 }
 
 // Helper to edit Telegram message
@@ -900,7 +910,17 @@ async function editTelegramMessage(tgId, messageId, newMessage, imageUrl, btnTex
         body: JSON.stringify(body)
     });
 
-    return await response.json();
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Telegram API Error: ${response.status} - ${errText}`);
+    }
+
+    const resJson = await response.json();
+    if (!resJson.ok) {
+        throw new Error(`Telegram API Error: ${resJson.description || 'Unknown error'}`);
+    }
+
+    return resJson;
 }
 
 // Helper to delete Telegram message

@@ -828,6 +828,7 @@ if ($route === '/admin/finance-stats' && $method === 'GET') {
         $totalPayingUsers = (int)$stmt->fetch()['totalPayingUsers'];
 
         // 5. Provider Costs
+
         $stmt = $pdo->query("
             SELECT o.*, sc.profit_margin, sc.custom_rate 
             FROM orders o 
@@ -896,9 +897,51 @@ function sendTelegramMessagePHP($tgId, $message, $imageUrl) {
         'inline_keyboard' => [
             [
                 [
-                    'text' => 'Start App',
+                    'text' => 'Open App 🎵',
                     'web_app' => [
-                        'url' => 'https://rococo-cannoli-596080.netlify.app/'
+                        'url' => 'https://musical-caramel-cae47e.netlifyapp/'
+                    ]
+                ]
+            ]
+        ]
+    ];
+
+    if (!empty($imageUrl)) {
+        $url = "https://api.telegram.org/bot{$token}/sendPhoto";
+        $payload = [
+            'chat_id' => (string)$tgId,
+            'photo' => $imageUrl,
+            'parse_mode' => 'HTML',
+            'reply_markup' => $replyMarkup
+        ];
+        if (!empty($message)) {
+            $payload['caption'] = $message;
+        }
+    } else {
+        $url = "https://api.telegram.org/bot{$token}/sendMessage";
+        $payload = [
+            'chat_id' => (string)$tgId,
+            'text' => $message ?: '',
+            'parse_mode' => 'HTML',
+            'reply_markup' => $replyMarkup
+        ];
+    }
+
+    $res = curlRequest('POST', $url, ['Content-Type: application/json'], json_encode($payload), 10);
+    if ($res['code'] < 200 || $res['code'] >= 300) {
+        throw new Exception("Telegram API Error: Status {$res['code']} - {$res['body']} {$res['error']}");
+    }
+
+    $body = json_decode($res['body'], true);
+    if (isset($body['ok']) && !$body['ok']) {
+        throw new Exception("Telegram API Error: " . (isset($body['description']) ? $body['description'] : 'Unknown error'));
+    }
+
+    return $body;
+}
+;
+}
+co-cannoli-596080.netlify.app/'
                     ]
                 ]
             ]
@@ -1040,7 +1083,7 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
 }
 
 // Helper to send broadcast Telegram message (with custom button text/url support)
-function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
+function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlifyapp/') {
     $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
     if (empty($token)) {
         throw new Exception('BOT_TOKEN is not configured');
@@ -1052,7 +1095,7 @@ function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open Ap
                 [
                     'text' => $btnText ?: 'Open App 🎵',
                     'web_app' => [
-                        'url' => $btnUrl ?: 'https://musical-caramel-cae47e.netlify.app/'
+                        'url' => $btnUrl ?: 'https://musical-caramel-cae47e.netlifyapp/'
                     ]
                 ]
             ]
@@ -1085,11 +1128,16 @@ function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open Ap
         throw new Exception("Telegram API Error: Status {$res['code']} - {$res['body']} {$res['error']}");
     }
 
-    return json_decode($res['body'], true);
+    $body = json_decode($res['body'], true);
+    if (isset($body['ok']) && !$body['ok']) {
+        throw new Exception("Telegram API Error: " . (isset($body['description']) ? $body['description'] : 'Unknown error'));
+    }
+
+    return $body;
 }
 
 // Helper to edit Telegram message text/caption (with custom button text/url support)
-function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
+function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlifyapp/') {
     $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
     if (empty($token)) {
         throw new Exception('BOT_TOKEN is not configured');
@@ -1101,7 +1149,7 @@ function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null
                 [
                     'text' => $btnText ?: 'Open App 🎵',
                     'web_app' => [
-                        'url' => $btnUrl ?: 'https://musical-caramel-cae47e.netlify.app/'
+                        'url' => $btnUrl ?: 'https://musical-caramel-cae47e.netlifyapp/'
                     ]
                 ]
             ]
@@ -1129,7 +1177,14 @@ function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null
     }
 
     $res = curlRequest('POST', $url, ['Content-Type: application/json'], json_encode($payload), 10);
-    return json_decode($res['body'], true);
+    if ($res['code'] < 200 || $res['code'] >= 300) {
+        throw new Exception("Telegram API Error: Status {$res['code']} - {$res['body']} {$res['error']}");
+    }
+    $body = json_decode($res['body'], true);
+    if (isset($body['ok']) && !$body['ok']) {
+        throw new Exception("Telegram API Error: " . (isset($body['description']) ? $body['description'] : 'Unknown error'));
+    }
+    return $body;
 }
 
 // Helper to delete Telegram message
@@ -1146,7 +1201,14 @@ function deleteTelegramMessagePHP($tgId, $messageId) {
     ];
 
     $res = curlRequest('POST', $url, ['Content-Type: application/json'], json_encode($payload), 10);
-    return json_decode($res['body'], true);
+    if ($res['code'] < 200 || $res['code'] >= 300) {
+        throw new Exception("Telegram API Error: Status {$res['code']} - {$res['body']} {$res['error']}");
+    }
+    $body = json_decode($res['body'], true);
+    if (isset($body['ok']) && !$body['ok']) {
+        throw new Exception("Telegram API Error: " . (isset($body['description']) ? $body['description'] : 'Unknown error'));
+    }
+    return $body;
 }
 
 // ─── ROUTE: /admin/broadcasts (GET) ─────────────────────────────
@@ -1397,12 +1459,12 @@ if (strpos($route, '/admin/broadcasts/messages/') === 0) {
                 $newMessage = isset($requestData['message']) ? $requestData['message'] : '';
                 $newImageUrl = isset($requestData['imageUrl']) ? $requestData['imageUrl'] : null;
 
-                $stmt = $pdo->prepare('
+                $stmt = $pdo->prepare("
                     SELECT bm.*, b.btn_text, b.btn_url 
                     FROM broadcast_messages bm 
                     JOIN broadcasts b ON bm.broadcast_id = b.id 
-                    WHERE bm.id = :id AND bm.status = "sent"
-                ');
+                    WHERE bm.id = :id AND bm.status = 'sent'
+                ");
                 $stmt->execute(['id' => $msgId]);
                 $msgRecord = $stmt->fetch();
 
@@ -1436,7 +1498,7 @@ if (strpos($route, '/admin/broadcasts/messages/') === 0) {
 
         if ($method === 'DELETE') {
             try {
-                $stmt = $pdo->prepare('SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE id = :id AND status = "sent"');
+                $stmt = $pdo->prepare("SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE id = :id AND status = 'sent'");
                 $stmt->execute(['id' => $msgId]);
                 $msgRecord = $stmt->fetch();
 
