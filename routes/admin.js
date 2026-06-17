@@ -645,7 +645,7 @@ router.get('/finance-stats', async (req, res) => {
 
 // Helper to send Telegram message
 async function sendTelegram(tgId, message, imageUrl) {
-    const token = process.env.BOT_TOKEN || '7547947738:AAFCrTdxp5EmLg5f39rrKn8kO5kLhA0Tekw';
+    const token = process.env.BOT_TOKEN || '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk';
     if (!token) {
         throw new Error('BOT_TOKEN is not configured');
     }

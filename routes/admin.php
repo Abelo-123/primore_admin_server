@@ -858,7 +858,7 @@ if ($route === '/admin/finance-stats' && $method === 'GET') {
 
 // Helper to send Telegram message in PHP
 function sendTelegramMessagePHP($tgId, $message, $imageUrl) {
-    $token = getEnvVar('BOT_TOKEN', '7547947738:AAFCrTdxp5EmLg5f39rrKn8kO5kLhA0Tekw');
+    $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
     if (empty($token)) {
         throw new Exception('BOT_TOKEN is not configured');
     }
