@@ -20,6 +20,28 @@ try {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS broadcasts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            message TEXT NOT NULL,
+            image_url VARCHAR(512) DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS broadcast_messages (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            broadcast_id INT NOT NULL,
+            tg_id VARCHAR(255) NOT NULL,
+            telegram_message_id INT NOT NULL,
+            status VARCHAR(50) DEFAULT 'sent',
+            error_message TEXT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (broadcast_id) REFERENCES broadcasts(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ");
 } catch (PDOException $e) {
     // Fail silently
 }
@@ -991,4 +1013,306 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
     }
     exit;
 }
+
+// Helper to send broadcast Telegram message (with musical-caramel URL)
+function sendBroadcastMessagePHP($tgId, $message, $imageUrl) {
+    $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
+    if (empty($token)) {
+        throw new Exception('BOT_TOKEN is not configured');
+    }
+
+    $replyMarkup = [
+        'inline_keyboard' => [
+            [
+                [
+                    'text' => 'Open App 🎵',
+                    'web_app' => [
+                        'url' => 'https://musical-caramel-cae47e.netlify.app/'
+                    ]
+                ]
+            ]
+        ]
+    ];
+
+    if (!empty($imageUrl)) {
+        $url = "https://api.telegram.org/bot{$token}/sendPhoto";
+        $payload = [
+            'chat_id' => (string)$tgId,
+            'photo' => $imageUrl,
+            'parse_mode' => 'HTML',
+            'reply_markup' => $replyMarkup
+        ];
+        if (!empty($message)) {
+            $payload['caption'] = $message;
+        }
+    } else {
+        $url = "https://api.telegram.org/bot{$token}/sendMessage";
+        $payload = [
+            'chat_id' => (string)$tgId,
+            'text' => $message ?: '',
+            'parse_mode' => 'HTML',
+            'reply_markup' => $replyMarkup
+        ];
+    }
+
+    $res = curlRequest('POST', $url, ['Content-Type: application/json'], json_encode($payload), 10);
+    if ($res['code'] < 200 || $res['code'] >= 300) {
+        throw new Exception("Telegram API Error: Status {$res['code']} - {$res['body']} {$res['error']}");
+    }
+
+    return json_decode($res['body'], true);
+}
+
+// Helper to edit Telegram message text/caption
+function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null) {
+    $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
+    if (empty($token)) {
+        throw new Exception('BOT_TOKEN is not configured');
+    }
+
+    $replyMarkup = [
+        'inline_keyboard' => [
+            [
+                [
+                    'text' => 'Open App 🎵',
+                    'web_app' => [
+                        'url' => 'https://musical-caramel-cae47e.netlify.app/'
+                    ]
+                ]
+            ]
+        ]
+    ];
+
+    if (!empty($imageUrl)) {
+        $url = "https://api.telegram.org/bot{$token}/editMessageCaption";
+        $payload = [
+            'chat_id' => (string)$tgId,
+            'message_id' => (int)$messageId,
+            'caption' => $newMessage,
+            'parse_mode' => 'HTML',
+            'reply_markup' => $replyMarkup
+        ];
+    } else {
+        $url = "https://api.telegram.org/bot{$token}/editMessageText";
+        $payload = [
+            'chat_id' => (string)$tgId,
+            'message_id' => (int)$messageId,
+            'text' => $newMessage,
+            'parse_mode' => 'HTML',
+            'reply_markup' => $replyMarkup
+        ];
+    }
+
+    $res = curlRequest('POST', $url, ['Content-Type: application/json'], json_encode($payload), 10);
+    return json_decode($res['body'], true);
+}
+
+// Helper to delete Telegram message
+function deleteTelegramMessagePHP($tgId, $messageId) {
+    $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
+    if (empty($token)) {
+        throw new Exception('BOT_TOKEN is not configured');
+    }
+
+    $url = "https://api.telegram.org/bot{$token}/deleteMessage";
+    $payload = [
+        'chat_id' => (string)$tgId,
+        'message_id' => (int)$messageId
+    ];
+
+    $res = curlRequest('POST', $url, ['Content-Type: application/json'], json_encode($payload), 10);
+    return json_decode($res['body'], true);
+}
+
+// ─── ROUTE: /admin/broadcasts (GET) ─────────────────────────────
+if ($route === '/admin/broadcasts' && $method === 'GET') {
+    try {
+        $stmt = $pdo->query('
+            SELECT b.*, 
+                   COALESCE(SUM(CASE WHEN bm.status = "sent" THEN 1 ELSE 0 END), 0) as sent_count,
+                   COALESCE(SUM(CASE WHEN bm.status = "failed" THEN 1 ELSE 0 END), 0) as failed_count
+            FROM broadcasts b
+            LEFT JOIN broadcast_messages bm ON b.id = bm.broadcast_id
+            GROUP BY b.id
+            ORDER BY b.created_at DESC
+        ');
+        $rows = $stmt->fetchAll();
+        foreach ($rows as &$r) {
+            $r['id'] = (int)$r['id'];
+            $r['sent_count'] = (int)$r['sent_count'];
+            $r['failed_count'] = (int)$r['failed_count'];
+        }
+        echo json_encode($rows);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Failed to load broadcasts', 'details' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// ─── ROUTE: /admin/broadcasts (POST) ────────────────────────────
+if ($route === '/admin/broadcasts' && $method === 'POST') {
+    try {
+        $message = isset($requestData['message']) ? $requestData['message'] : null;
+        $imageUrl = isset($requestData['imageUrl']) ? $requestData['imageUrl'] : null;
+
+        if (empty($message) && empty($imageUrl)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Either message or imageUrl is required']);
+            exit;
+        }
+
+        $stmt = $pdo->prepare('INSERT INTO broadcasts (message, image_url, created_at) VALUES (:msg, :img, NOW())');
+        $stmt->execute(['msg' => $message ?: '', 'img' => $imageUrl]);
+        $broadcastId = $pdo->lastInsertId();
+
+        $stmt = $pdo->query('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL');
+        $users = $stmt->fetchAll();
+
+        $sentCount = 0;
+        $failedCount = 0;
+
+        $stmtInsert = $pdo->prepare('
+            INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at)
+            VALUES (:broadcast_id, :tg_id, :msg_id, :status, :err, NOW())
+        ');
+
+        foreach ($users as $user) {
+            $personalizedText = $message ?: '';
+            $firstName = !empty($user['first_name']) ? $user['first_name'] : 'User';
+            $personalizedText = str_ireplace('{name}', $firstName, $personalizedText);
+            $personalizedText = str_ireplace('{first_name}', $firstName, $personalizedText);
+
+            try {
+                $tgRes = sendBroadcastMessagePHP($user['tg_id'], $personalizedText, $imageUrl);
+                if (isset($tgRes['ok']) && $tgRes['ok'] && isset($tgRes['result']['message_id'])) {
+                    $msgId = $tgRes['result']['message_id'];
+                    $stmtInsert->execute([
+                        'broadcast_id' => $broadcastId,
+                        'tg_id'        => $user['tg_id'],
+                        'msg_id'       => $msgId,
+                        'status'       => 'sent',
+                        'err'          => null
+                    ]);
+                    $sentCount++;
+                } else {
+                    $stmtInsert->execute([
+                        'broadcast_id' => $broadcastId,
+                        'tg_id'        => $user['tg_id'],
+                        'msg_id'       => 0,
+                        'status'       => 'failed',
+                        'err'          => 'Invalid Telegram response'
+                    ]);
+                    $failedCount++;
+                }
+            } catch (Exception $e) {
+                $stmtInsert->execute([
+                    'broadcast_id' => $broadcastId,
+                    'tg_id'        => $user['tg_id'],
+                    'msg_id'       => 0,
+                    'status'       => 'failed',
+                    'err'          => $e->getMessage()
+                ]);
+                $failedCount++;
+            }
+        }
+
+        echo json_encode([
+            'success'      => true,
+            'broadcast_id' => (int)$broadcastId,
+            'sent_count'   => $sentCount,
+            'failed_count' => $failedCount
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Failed to create broadcast', 'details' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// ─── ROUTE: /admin/broadcasts/:id (PUT / DELETE) ─────────────────
+if (strpos($route, '/admin/broadcasts/') === 0) {
+    $parts = explode('/', trim($route, '/'));
+    if (count($parts) === 3 && $parts[1] === 'broadcasts') {
+        $broadcastId = (int)$parts[2];
+
+        if ($method === 'PUT') {
+            try {
+                $newMessage = isset($requestData['message']) ? $requestData['message'] : '';
+                $newImageUrl = isset($requestData['imageUrl']) ? $requestData['imageUrl'] : null;
+
+                $stmt = $pdo->prepare('UPDATE broadcasts SET message = :msg, image_url = :img WHERE id = :id');
+                $stmt->execute(['msg' => $newMessage, 'img' => $newImageUrl, 'id' => $broadcastId]);
+
+                $stmt = $pdo->prepare('SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = :id AND status = "sent"');
+                $stmt->execute(['id' => $broadcastId]);
+                $messages = $stmt->fetchAll();
+
+                $updatedCount = 0;
+                $failedCount = 0;
+
+                foreach ($messages as $msg) {
+                    try {
+                        $stmtUser = $pdo->prepare('SELECT first_name FROM auth WHERE tg_id = :tg_id LIMIT 1');
+                        $stmtUser->execute(['tg_id' => $msg['tg_id']]);
+                        $u = $stmtUser->fetch();
+                        $firstName = ($u && !empty($u['first_name'])) ? $u['first_name'] : 'User';
+
+                        $personalizedText = str_ireplace('{name}', $firstName, $newMessage);
+                        $personalizedText = str_ireplace('{first_name}', $firstName, $personalizedText);
+
+                        editTelegramMessagePHP($msg['tg_id'], $msg['telegram_message_id'], $personalizedText, $newImageUrl);
+                        $updatedCount++;
+                    } catch (Exception $e) {
+                        $failedCount++;
+                    }
+                }
+
+                echo json_encode([
+                    'success'       => true,
+                    'updated_count' => $updatedCount,
+                    'failed_count'  => $failedCount
+                ]);
+            } catch (Exception $e) {
+                http_response_code(500);
+                echo json_encode(['error' => 'Failed to update broadcast', 'details' => $e->getMessage()]);
+            }
+            exit;
+        }
+
+        if ($method === 'DELETE') {
+            try {
+                $stmt = $pdo->prepare('SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = :id AND status = "sent"');
+                $stmt->execute(['id' => $broadcastId]);
+                $messages = $stmt->fetchAll();
+
+                $deletedCount = 0;
+                $failedCount = 0;
+
+                foreach ($messages as $msg) {
+                    try {
+                        deleteTelegramMessagePHP($msg['tg_id'], $msg['telegram_message_id']);
+                        $deletedCount++;
+                    } catch (Exception $e) {
+                        $failedCount++;
+                    }
+                }
+
+                $stmt = $pdo->prepare('DELETE FROM broadcasts WHERE id = :id');
+                $stmt->execute(['id' => $broadcastId]);
+
+                echo json_encode([
+                    'success'       => true,
+                    'deleted_count' => $deletedCount,
+                    'failed_count'  => $failedCount
+                ]);
+            } catch (Exception $e) {
+                http_response_code(500);
+                echo json_encode(['error' => 'Failed to delete broadcast', 'details' => $e->getMessage()]);
+            }
+            exit;
+        }
+    }
+}
+
 

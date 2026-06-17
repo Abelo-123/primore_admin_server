@@ -777,5 +777,304 @@ router.post('/send-telegram', async (req, res) => {
     }
 });
 
+// Helper to send broadcast Telegram message
+async function sendBroadcastMessage(tgId, message, imageUrl) {
+    const token = process.env.BOT_TOKEN || '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk';
+    if (!token) {
+        throw new Error('BOT_TOKEN is not configured');
+    }
+    
+    const replyMarkup = {
+        inline_keyboard: [
+            [
+                {
+                    text: 'Open App 🎵',
+                    web_app: {
+                        url: 'https://musical-caramel-cae47e.netlify.app/'
+                    }
+                }
+            ]
+        ]
+    };
+
+    let url;
+    let body;
+    if (imageUrl) {
+        url = `https://api.telegram.org/bot${token}/sendPhoto`;
+        body = {
+            chat_id: String(tgId),
+            photo: imageUrl,
+            parse_mode: 'HTML',
+            reply_markup: replyMarkup
+        };
+        if (message) {
+            body.caption = message;
+        }
+    } else {
+        url = `https://api.telegram.org/bot${token}/sendMessage`;
+        body = {
+            chat_id: String(tgId),
+            text: message || '',
+            parse_mode: 'HTML',
+            reply_markup: replyMarkup
+        };
+    }
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Telegram API Error: ${response.status} - ${errText}`);
+    }
+
+    return await response.json();
+}
+
+// Helper to edit Telegram message
+async function editTelegramMessage(tgId, messageId, newMessage, imageUrl) {
+    const token = process.env.BOT_TOKEN || '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk';
+    if (!token) {
+        throw new Error('BOT_TOKEN is not configured');
+    }
+
+    const replyMarkup = {
+        inline_keyboard: [
+            [
+                {
+                    text: 'Open App 🎵',
+                    web_app: {
+                        url: 'https://musical-caramel-cae47e.netlify.app/'
+                    }
+                }
+            ]
+        ]
+    };
+
+    let url;
+    let body;
+    if (imageUrl) {
+        url = `https://api.telegram.org/bot${token}/editMessageCaption`;
+        body = {
+            chat_id: String(tgId),
+            message_id: Number(messageId),
+            caption: newMessage,
+            parse_mode: 'HTML',
+            reply_markup: replyMarkup
+        };
+    } else {
+        url = `https://api.telegram.org/bot${token}/editMessageText`;
+        body = {
+            chat_id: String(tgId),
+            message_id: Number(messageId),
+            text: newMessage,
+            parse_mode: 'HTML',
+            reply_markup: replyMarkup
+        };
+    }
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+    });
+
+    return await response.json();
+}
+
+// Helper to delete Telegram message
+async function deleteTelegramMessage(tgId, messageId) {
+    const token = process.env.BOT_TOKEN || '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk';
+    if (!token) {
+        throw new Error('BOT_TOKEN is not configured');
+    }
+
+    const url = `https://api.telegram.org/bot${token}/deleteMessage`;
+    const body = {
+        chat_id: String(tgId),
+        message_id: Number(messageId)
+    };
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+    });
+
+    return await response.json();
+}
+
+// Route to get broadcasts list
+router.get('/broadcasts', async (req, res) => {
+    try {
+        const [rows] = await pool.execute(`
+            SELECT b.*, 
+                   COALESCE(SUM(CASE WHEN bm.status = 'sent' THEN 1 ELSE 0 END), 0) as sent_count,
+                   COALESCE(SUM(CASE WHEN bm.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count
+            FROM broadcasts b
+            LEFT JOIN broadcast_messages bm ON b.id = bm.broadcast_id
+            GROUP BY b.id
+            ORDER BY b.created_at DESC
+        `);
+        return res.json(rows);
+    } catch (err) {
+        console.error('[admin/broadcasts GET]', err);
+        return res.status(500).json({ error: 'Failed to load broadcasts' });
+    }
+});
+
+// Route to create a broadcast
+router.post('/broadcasts', async (req, res) => {
+    try {
+        const { message, imageUrl } = req.body;
+        if (!message && !imageUrl) {
+            return res.status(400).json({ error: 'Either message or imageUrl is required' });
+        }
+
+        const [result] = await pool.execute(
+            'INSERT INTO broadcasts (message, image_url, created_at) VALUES (?, ?, NOW())',
+            [message || '', imageUrl || null]
+        );
+        const broadcastId = result.insertId;
+
+        const [users] = await pool.execute('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL');
+
+        let sentCount = 0;
+        let failedCount = 0;
+
+        for (const user of users) {
+            let personalizedText = message || '';
+            const firstName = user.first_name || 'User';
+            personalizedText = personalizedText
+                .replace(/{name}/gi, firstName)
+                .replace(/{first_name}/gi, firstName);
+
+            try {
+                const tgRes = await sendBroadcastMessage(user.tg_id, personalizedText, imageUrl);
+                if (tgRes && tgRes.ok && tgRes.result && tgRes.result.message_id) {
+                    const msgId = tgRes.result.message_id;
+                    await pool.execute(
+                        'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+                        [broadcastId, user.tg_id, msgId, 'sent', null]
+                    );
+                    sentCount++;
+                } else {
+                    await pool.execute(
+                        'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+                        [broadcastId, user.tg_id, 0, 'failed', 'Invalid Telegram response']
+                    );
+                    failedCount++;
+                }
+            } catch (err) {
+                await pool.execute(
+                    'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+                    [broadcastId, user.tg_id, 0, 'failed', err.message]
+                );
+                failedCount++;
+            }
+        }
+
+        return res.json({
+            success: true,
+            broadcast_id: broadcastId,
+            sent_count: sentCount,
+            failed_count: failedCount
+        });
+    } catch (err) {
+        console.error('[admin/broadcasts POST]', err);
+        return res.status(500).json({ error: 'Failed to create broadcast' });
+    }
+});
+
+// Route to edit a broadcast
+router.put('/broadcasts/:id', async (req, res) => {
+    try {
+        const broadcastId = req.params.id;
+        const { message, imageUrl } = req.body;
+
+        await pool.execute(
+            'UPDATE broadcasts SET message = ?, image_url = ? WHERE id = ?',
+            [message || '', imageUrl || null, broadcastId]
+        );
+
+        const [messages] = await pool.execute(
+            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent'",
+            [broadcastId]
+        );
+
+        let updatedCount = 0;
+        let failedCount = 0;
+
+        for (const msg of messages) {
+            try {
+                const [uRows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? LIMIT 1', [msg.tg_id]);
+                const firstName = uRows.length > 0 ? (uRows[0].first_name || 'User') : 'User';
+                
+                const personalizedText = (message || '')
+                    .replace(/{name}/gi, firstName)
+                    .replace(/{first_name}/gi, firstName);
+
+                await editTelegramMessage(msg.tg_id, msg.telegram_message_id, personalizedText, imageUrl);
+                updatedCount++;
+            } catch (err) {
+                failedCount++;
+            }
+        }
+
+        return res.json({
+            success: true,
+            updated_count: updatedCount,
+            failed_count: failedCount
+        });
+    } catch (err) {
+        console.error('[admin/broadcasts PUT]', err);
+        return res.status(500).json({ error: 'Failed to update broadcast' });
+    }
+});
+
+// Route to delete a broadcast
+router.delete('/broadcasts/:id', async (req, res) => {
+    try {
+        const broadcastId = req.params.id;
+
+        const [messages] = await pool.execute(
+            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent'",
+            [broadcastId]
+        );
+
+        let deletedCount = 0;
+        let failedCount = 0;
+
+        for (const msg of messages) {
+            try {
+                await deleteTelegramMessage(msg.tg_id, msg.telegram_message_id);
+                deletedCount++;
+            } catch (err) {
+                failedCount++;
+            }
+        }
+
+        await pool.execute('DELETE FROM broadcasts WHERE id = ?', [broadcastId]);
+
+        return res.json({
+            success: true,
+            deleted_count: deletedCount,
+            failed_count: failedCount
+        });
+    } catch (err) {
+        console.error('[admin/broadcasts DELETE]', err);
+        return res.status(500).json({ error: 'Failed to delete broadcast' });
+    }
+});
+
 export default router;
 

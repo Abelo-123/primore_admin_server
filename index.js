@@ -59,6 +59,30 @@ const app = express();
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             `);
 
+            // Ensure broadcasts table exists
+            await conn.execute(`
+                CREATE TABLE IF NOT EXISTS broadcasts (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    message TEXT NOT NULL,
+                    image_url VARCHAR(512) DEFAULT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            `);
+
+            // Ensure broadcast_messages table exists
+            await conn.execute(`
+                CREATE TABLE IF NOT EXISTS broadcast_messages (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    broadcast_id INT NOT NULL,
+                    tg_id VARCHAR(255) NOT NULL,
+                    telegram_message_id INT NOT NULL,
+                    status VARCHAR(50) DEFAULT 'sent',
+                    error_message TEXT DEFAULT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (broadcast_id) REFERENCES broadcasts(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            `);
+
             // Ensure custom_description column exists in service_custom
             try {
                 await conn.execute('ALTER TABLE service_custom ADD COLUMN custom_description TEXT');
