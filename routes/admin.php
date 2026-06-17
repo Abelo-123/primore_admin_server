@@ -820,12 +820,26 @@ function sendTelegramMessagePHP($tgId, $message, $imageUrl) {
         throw new Exception('BOT_TOKEN is not configured');
     }
 
+    $replyMarkup = [
+        'inline_keyboard' => [
+            [
+                [
+                    'text' => 'Start App',
+                    'web_app' => [
+                        'url' => 'https://rococo-cannoli-596080.netlify.app/'
+                    ]
+                ]
+            ]
+        ]
+    ];
+
     if (!empty($imageUrl)) {
         $url = "https://api.telegram.org/bot{$token}/sendPhoto";
         $payload = [
             'chat_id' => (string)$tgId,
             'photo' => $imageUrl,
-            'parse_mode' => 'HTML'
+            'parse_mode' => 'HTML',
+            'reply_markup' => $replyMarkup
         ];
         if (!empty($message)) {
             $payload['caption'] = $message;
@@ -835,9 +849,11 @@ function sendTelegramMessagePHP($tgId, $message, $imageUrl) {
         $payload = [
             'chat_id' => (string)$tgId,
             'text' => $message ?: '',
-            'parse_mode' => 'HTML'
+            'parse_mode' => 'HTML',
+            'reply_markup' => $replyMarkup
         ];
     }
+
 
     $res = curlRequest('POST', $url, ['Content-Type: application/json'], json_encode($payload), 10);
     if ($res['code'] < 200 || $res['code'] >= 300) {

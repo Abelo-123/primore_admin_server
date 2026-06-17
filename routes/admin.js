@@ -617,6 +617,19 @@ async function sendTelegram(tgId, message, imageUrl) {
         throw new Error('BOT_TOKEN is not configured');
     }
     
+    const replyMarkup = {
+        inline_keyboard: [
+            [
+                {
+                    text: 'Start App',
+                    web_app: {
+                        url: 'https://rococo-cannoli-596080.netlify.app/'
+                    }
+                }
+            ]
+        ]
+    };
+
     let url;
     let body;
     if (imageUrl) {
@@ -624,7 +637,8 @@ async function sendTelegram(tgId, message, imageUrl) {
         body = {
             chat_id: String(tgId),
             photo: imageUrl,
-            parse_mode: 'HTML'
+            parse_mode: 'HTML',
+            reply_markup: replyMarkup
         };
         if (message) {
             body.caption = message;
@@ -634,9 +648,11 @@ async function sendTelegram(tgId, message, imageUrl) {
         body = {
             chat_id: String(tgId),
             text: message || '',
-            parse_mode: 'HTML'
+            parse_mode: 'HTML',
+            reply_markup: replyMarkup
         };
     }
+
 
     const response = await fetch(url, {
         method: 'POST',
