@@ -1011,7 +1011,25 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
                 error_log("Failed to fetch user for personalization: " . $dbErr->getMessage());
             }
 
-            sendTelegramMessagePHP($target, $personalizedText, $imageUrl);
+            $tgRes = sendTelegramMessagePHP($target, $personalizedText, $imageUrl);
+
+            // Save to broadcasts history so it can be managed
+            $stmtB = $pdo->prepare("INSERT INTO broadcasts (message, image_url, btn_text, btn_url, created_at) VALUES (:msg, :img, 'Open App 🎵', 'https://musical-caramel-cae47e.netlify.app/', NOW())");
+            $stmtB->execute([
+                'msg' => $message ?: '',
+                'img' => $imageUrl
+            ]);
+            $broadcastId = $pdo->lastInsertId();
+
+            if (isset($tgRes['ok']) && $tgRes['ok'] && isset($tgRes['result']['message_id'])) {
+                $stmtM = $pdo->prepare('INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (:b_id, :tg, :msg_id, "sent", NULL, NOW())');
+                $stmtM->execute([
+                    'b_id'   => $broadcastId,
+                    'tg'     => $target,
+                    'msg_id' => $tgRes['result']['message_id']
+                ]);
+            }
+
             echo json_encode(['success' => true]);
         }
     } catch (Exception $e) {

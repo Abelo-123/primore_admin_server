@@ -768,7 +768,21 @@ router.post('/send-telegram', async (req, res) => {
                 console.error('Failed to fetch user for personalization:', dbErr.message);
             }
 
-            await sendTelegram(target, personalizedText, imageUrl);
+            const tgRes = await sendTelegram(target, personalizedText, imageUrl);
+
+            const [result] = await pool.execute(
+                "INSERT INTO broadcasts (message, image_url, btn_text, btn_url, created_at) VALUES (?, ?, 'Open App 🎵', 'https://musical-caramel-cae47e.netlify.app/', NOW())",
+                [message || '', imageUrl || null]
+            );
+            const broadcastId = result.insertId;
+
+            if (tgRes && tgRes.ok && tgRes.result && tgRes.result.message_id) {
+                await pool.execute(
+                    'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+                    [broadcastId, target, tgRes.result.message_id, 'sent', null]
+                );
+            }
+
             return res.json({ success: true });
         }
     } catch (err) {
