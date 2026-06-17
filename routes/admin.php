@@ -27,7 +27,20 @@ try {
 $method = $_SERVER['REQUEST_METHOD'];
 
 // Check auth
-$authHeader = isset($_SERVER['HTTP_AUTHORIZATION']) ? $_SERVER['HTTP_AUTHORIZATION'] : '';
+$authHeader = '';
+if (isset($_SERVER['HTTP_AUTHORIZATION'])) {
+    $authHeader = $_SERVER['HTTP_AUTHORIZATION'];
+} elseif (isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
+    $authHeader = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
+} elseif (function_exists('apache_request_headers')) {
+    $headers = apache_request_headers();
+    if (isset($headers['Authorization'])) {
+        $authHeader = $headers['Authorization'];
+    } elseif (isset($headers['authorization'])) {
+        $authHeader = $headers['authorization'];
+    }
+}
+
 $adminPass = getEnvVar('ADMIN_PASSWORD', 'paxyo2026');
 
 $providedPass = '';
