@@ -778,7 +778,7 @@ router.post('/send-telegram', async (req, res) => {
 });
 
 // Helper to send broadcast Telegram message
-async function sendBroadcastMessage(tgId, message, imageUrl) {
+async function sendBroadcastMessage(tgId, message, imageUrl, btnText = 'Open App 🎵', btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
     const token = process.env.BOT_TOKEN || '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk';
     if (!token) {
         throw new Error('BOT_TOKEN is not configured');
@@ -788,9 +788,9 @@ async function sendBroadcastMessage(tgId, message, imageUrl) {
         inline_keyboard: [
             [
                 {
-                    text: 'Open App 🎵',
+                    text: btnText || 'Open App 🎵',
                     web_app: {
-                        url: 'https://musical-caramel-cae47e.netlify.app/'
+                        url: btnUrl || 'https://musical-caramel-cae47e.netlify.app/'
                     }
                 }
             ]
@@ -837,7 +837,7 @@ async function sendBroadcastMessage(tgId, message, imageUrl) {
 }
 
 // Helper to edit Telegram message
-async function editTelegramMessage(tgId, messageId, newMessage, imageUrl) {
+async function editTelegramMessage(tgId, messageId, newMessage, imageUrl, btnText = 'Open App 🎵', btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
     const token = process.env.BOT_TOKEN || '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk';
     if (!token) {
         throw new Error('BOT_TOKEN is not configured');
@@ -847,9 +847,9 @@ async function editTelegramMessage(tgId, messageId, newMessage, imageUrl) {
         inline_keyboard: [
             [
                 {
-                    text: 'Open App 🎵',
+                    text: btnText || 'Open App 🎵',
                     web_app: {
-                        url: 'https://musical-caramel-cae47e.netlify.app/'
+                        url: btnUrl || 'https://musical-caramel-cae47e.netlify.app/'
                     }
                 }
             ]
@@ -933,14 +933,17 @@ router.get('/broadcasts', async (req, res) => {
 // Route to create a broadcast
 router.post('/broadcasts', async (req, res) => {
     try {
-        const { message, imageUrl } = req.body;
+        const { message, imageUrl, btnText, btnUrl } = req.body;
         if (!message && !imageUrl) {
             return res.status(400).json({ error: 'Either message or imageUrl is required' });
         }
 
+        const bText = btnText || 'Open App 🎵';
+        const bUrl = btnUrl || 'https://musical-caramel-cae47e.netlify.app/';
+
         const [result] = await pool.execute(
-            'INSERT INTO broadcasts (message, image_url, created_at) VALUES (?, ?, NOW())',
-            [message || '', imageUrl || null]
+            'INSERT INTO broadcasts (message, image_url, btn_text, btn_url, created_at) VALUES (?, ?, ?, ?, NOW())',
+            [message || '', imageUrl || null, bText, bUrl]
         );
         const broadcastId = result.insertId;
 
@@ -957,7 +960,7 @@ router.post('/broadcasts', async (req, res) => {
                 .replace(/{first_name}/gi, firstName);
 
             try {
-                const tgRes = await sendBroadcastMessage(user.tg_id, personalizedText, imageUrl);
+                const tgRes = await sendBroadcastMessage(user.tg_id, personalizedText, imageUrl, bText, bUrl);
                 if (tgRes && tgRes.ok && tgRes.result && tgRes.result.message_id) {
                     const msgId = tgRes.result.message_id;
                     await pool.execute(
@@ -997,15 +1000,18 @@ router.post('/broadcasts', async (req, res) => {
 router.put('/broadcasts/:id', async (req, res) => {
     try {
         const broadcastId = req.params.id;
-        const { message, imageUrl } = req.body;
+        const { message, imageUrl, btnText, btnUrl } = req.body;
+
+        const bText = btnText || 'Open App 🎵';
+        const bUrl = btnUrl || 'https://musical-caramel-cae47e.netlify.app/';
 
         await pool.execute(
-            'UPDATE broadcasts SET message = ?, image_url = ? WHERE id = ?',
-            [message || '', imageUrl || null, broadcastId]
+            'UPDATE broadcasts SET message = ?, image_url = ?, btn_text = ?, btn_url = ? WHERE id = ?',
+            [message || '', imageUrl || null, bText, bUrl, broadcastId]
         );
 
         const [messages] = await pool.execute(
-            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent'",
+            "SELECT tg_id, telegram_message_id, custom_message FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent'",
             [broadcastId]
         );
 
@@ -1017,11 +1023,13 @@ router.put('/broadcasts/:id', async (req, res) => {
                 const [uRows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? LIMIT 1', [msg.tg_id]);
                 const firstName = uRows.length > 0 ? (uRows[0].first_name || 'User') : 'User';
                 
-                const personalizedText = (message || '')
+                const textToEdit = msg.custom_message || message || '';
+
+                const personalizedText = textToEdit
                     .replace(/{name}/gi, firstName)
                     .replace(/{first_name}/gi, firstName);
 
-                await editTelegramMessage(msg.tg_id, msg.telegram_message_id, personalizedText, imageUrl);
+                await editTelegramMessage(msg.tg_id, msg.telegram_message_id, personalizedText, imageUrl, bText, bUrl);
                 updatedCount++;
             } catch (err) {
                 failedCount++;
@@ -1074,5 +1082,82 @@ router.delete('/broadcasts/:id', async (req, res) => {
     }
 });
 
-export default router;
+// Route to list messages sent for a specific broadcast
+router.get('/broadcasts/:id/messages', async (req, res) => {
+    try {
+        const broadcastId = req.params.id;
+        const [rows] = await pool.execute(`
+            SELECT bm.*, a.first_name, a.username 
+            FROM broadcast_messages bm
+            LEFT JOIN auth a ON bm.tg_id = a.tg_id
+            WHERE bm.broadcast_id = ?
+            ORDER BY bm.created_at ASC
+        `, [broadcastId]);
+        return res.json(rows);
+    } catch (err) {
+        console.error('[admin/broadcasts/:id/messages GET]', err);
+        return res.status(500).json({ error: 'Failed to load broadcast messages' });
+    }
+});
 
+// Route to update a specific sent message
+router.put('/broadcasts/messages/:msg_id', async (req, res) => {
+    try {
+        const msgId = req.params.msg_id;
+        const { message, imageUrl } = req.body;
+
+        const [records] = await pool.execute(`
+            SELECT bm.*, b.btn_text, b.btn_url 
+            FROM broadcast_messages bm
+            JOIN broadcasts b ON bm.broadcast_id = b.id
+            WHERE bm.id = ? AND bm.status = 'sent'
+        `, [msgId]);
+        const msgRecord = records[0];
+
+        if (!msgRecord) {
+            return res.status(404).json({ error: 'Sent message record not found or already failed' });
+        }
+
+        await editTelegramMessage(
+            msgRecord.tg_id, 
+            msgRecord.telegram_message_id, 
+            message, 
+            imageUrl, 
+            msgRecord.btn_text, 
+            msgRecord.btn_url
+        );
+
+        await pool.execute('UPDATE broadcast_messages SET custom_message = ? WHERE id = ?', [message, msgId]);
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('[admin/broadcasts/messages/:msg_id PUT]', err);
+        return res.status(500).json({ error: 'Failed to update user message' });
+    }
+});
+
+// Route to delete a specific sent message
+router.delete('/broadcasts/messages/:msg_id', async (req, res) => {
+    try {
+        const msgId = req.params.msg_id;
+
+        const [records] = await pool.execute(
+            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE id = ? AND status = 'sent'",
+            [msgId]
+        );
+        const msgRecord = records[0];
+
+        if (msgRecord) {
+            await deleteTelegramMessage(msgRecord.tg_id, msgRecord.telegram_message_id);
+        }
+
+        await pool.execute('DELETE FROM broadcast_messages WHERE id = ?', [msgId]);
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('[admin/broadcasts/messages/:msg_id DELETE]', err);
+        return res.status(500).json({ error: 'Failed to delete user message' });
+    }
+});
+
+export default router;

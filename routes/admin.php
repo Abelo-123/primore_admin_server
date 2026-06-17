@@ -26,6 +26,8 @@ try {
             id INT AUTO_INCREMENT PRIMARY KEY,
             message TEXT NOT NULL,
             image_url VARCHAR(512) DEFAULT NULL,
+            btn_text VARCHAR(255) DEFAULT 'Open App 🎵',
+            btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlify.app/',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ");
@@ -38,10 +40,15 @@ try {
             telegram_message_id INT NOT NULL,
             status VARCHAR(50) DEFAULT 'sent',
             error_message TEXT DEFAULT NULL,
+            custom_message TEXT DEFAULT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (broadcast_id) REFERENCES broadcasts(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ");
+
+    try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN btn_text VARCHAR(255) DEFAULT 'Open App 🎵'"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlify.app/'"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE broadcast_messages ADD COLUMN custom_message TEXT DEFAULT NULL"); } catch (Exception $e) {}
 } catch (PDOException $e) {
     // Fail silently
 }
@@ -1014,8 +1021,8 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
     exit;
 }
 
-// Helper to send broadcast Telegram message (with musical-caramel URL)
-function sendBroadcastMessagePHP($tgId, $message, $imageUrl) {
+// Helper to send broadcast Telegram message (with custom button text/url support)
+function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
     $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
     if (empty($token)) {
         throw new Exception('BOT_TOKEN is not configured');
@@ -1025,9 +1032,9 @@ function sendBroadcastMessagePHP($tgId, $message, $imageUrl) {
         'inline_keyboard' => [
             [
                 [
-                    'text' => 'Open App 🎵',
+                    'text' => $btnText ?: 'Open App 🎵',
                     'web_app' => [
-                        'url' => 'https://musical-caramel-cae47e.netlify.app/'
+                        'url' => $btnUrl ?: 'https://musical-caramel-cae47e.netlify.app/'
                     ]
                 ]
             ]
@@ -1063,8 +1070,8 @@ function sendBroadcastMessagePHP($tgId, $message, $imageUrl) {
     return json_decode($res['body'], true);
 }
 
-// Helper to edit Telegram message text/caption
-function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null) {
+// Helper to edit Telegram message text/caption (with custom button text/url support)
+function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
     $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
     if (empty($token)) {
         throw new Exception('BOT_TOKEN is not configured');
@@ -1074,9 +1081,9 @@ function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null
         'inline_keyboard' => [
             [
                 [
-                    'text' => 'Open App 🎵',
+                    'text' => $btnText ?: 'Open App 🎵',
                     'web_app' => [
-                        'url' => 'https://musical-caramel-cae47e.netlify.app/'
+                        'url' => $btnUrl ?: 'https://musical-caramel-cae47e.netlify.app/'
                     ]
                 ]
             ]
@@ -1153,6 +1160,8 @@ if ($route === '/admin/broadcasts' && $method === 'POST') {
     try {
         $message = isset($requestData['message']) ? $requestData['message'] : null;
         $imageUrl = isset($requestData['imageUrl']) ? $requestData['imageUrl'] : null;
+        $btnText = isset($requestData['btnText']) ? $requestData['btnText'] : 'Open App 🎵';
+        $btnUrl = isset($requestData['btnUrl']) ? $requestData['btnUrl'] : 'https://musical-caramel-cae47e.netlify.app/';
 
         if (empty($message) && empty($imageUrl)) {
             http_response_code(400);
@@ -1160,8 +1169,13 @@ if ($route === '/admin/broadcasts' && $method === 'POST') {
             exit;
         }
 
-        $stmt = $pdo->prepare('INSERT INTO broadcasts (message, image_url, created_at) VALUES (:msg, :img, NOW())');
-        $stmt->execute(['msg' => $message ?: '', 'img' => $imageUrl]);
+        $stmt = $pdo->prepare('INSERT INTO broadcasts (message, image_url, btn_text, btn_url, created_at) VALUES (:msg, :img, :btn_t, :btn_u, NOW())');
+        $stmt->execute([
+            'msg'   => $message ?: '',
+            'img'   => $imageUrl,
+            'btn_t' => $btnText,
+            'btn_u' => $btnUrl
+        ]);
         $broadcastId = $pdo->lastInsertId();
 
         $stmt = $pdo->query('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL');
@@ -1182,7 +1196,7 @@ if ($route === '/admin/broadcasts' && $method === 'POST') {
             $personalizedText = str_ireplace('{first_name}', $firstName, $personalizedText);
 
             try {
-                $tgRes = sendBroadcastMessagePHP($user['tg_id'], $personalizedText, $imageUrl);
+                $tgRes = sendBroadcastMessagePHP($user['tg_id'], $personalizedText, $imageUrl, $btnText, $btnUrl);
                 if (isset($tgRes['ok']) && $tgRes['ok'] && isset($tgRes['result']['message_id'])) {
                     $msgId = $tgRes['result']['message_id'];
                     $stmtInsert->execute([
@@ -1229,7 +1243,7 @@ if ($route === '/admin/broadcasts' && $method === 'POST') {
 }
 
 // ─── ROUTE: /admin/broadcasts/:id (PUT / DELETE) ─────────────────
-if (strpos($route, '/admin/broadcasts/') === 0) {
+if (strpos($route, '/admin/broadcasts/') === 0 && strpos($route, '/messages') === false && strpos($route, '/broadcasts/messages/') === false) {
     $parts = explode('/', trim($route, '/'));
     if (count($parts) === 3 && $parts[1] === 'broadcasts') {
         $broadcastId = (int)$parts[2];
@@ -1238,11 +1252,19 @@ if (strpos($route, '/admin/broadcasts/') === 0) {
             try {
                 $newMessage = isset($requestData['message']) ? $requestData['message'] : '';
                 $newImageUrl = isset($requestData['imageUrl']) ? $requestData['imageUrl'] : null;
+                $newBtnText = isset($requestData['btnText']) ? $requestData['btnText'] : 'Open App 🎵';
+                $newBtnUrl = isset($requestData['btnUrl']) ? $requestData['btnUrl'] : 'https://musical-caramel-cae47e.netlify.app/';
 
-                $stmt = $pdo->prepare('UPDATE broadcasts SET message = :msg, image_url = :img WHERE id = :id');
-                $stmt->execute(['msg' => $newMessage, 'img' => $newImageUrl, 'id' => $broadcastId]);
+                $stmt = $pdo->prepare('UPDATE broadcasts SET message = :msg, image_url = :img, btn_text = :btn_t, btn_url = :btn_u WHERE id = :id');
+                $stmt->execute([
+                    'msg'   => $newMessage,
+                    'img'   => $newImageUrl,
+                    'btn_t' => $newBtnText,
+                    'btn_u' => $newBtnUrl,
+                    'id'    => $broadcastId
+                ]);
 
-                $stmt = $pdo->prepare("SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = :id AND status = 'sent'");
+                $stmt = $pdo->prepare("SELECT tg_id, telegram_message_id, custom_message FROM broadcast_messages WHERE broadcast_id = :id AND status = 'sent'");
                 $stmt->execute(['id' => $broadcastId]);
                 $messages = $stmt->fetchAll();
 
@@ -1251,15 +1273,19 @@ if (strpos($route, '/admin/broadcasts/') === 0) {
 
                 foreach ($messages as $msg) {
                     try {
+                        // If the message was customized for this specific user, don't overwrite it unless requested.
+                        // Or if we do update it, use the customized message. Here we will update using their custom_message if set, otherwise fallback to global newMessage.
+                        $textToEdit = !empty($msg['custom_message']) ? $msg['custom_message'] : $newMessage;
+
                         $stmtUser = $pdo->prepare('SELECT first_name FROM auth WHERE tg_id = :tg_id LIMIT 1');
                         $stmtUser->execute(['tg_id' => $msg['tg_id']]);
                         $u = $stmtUser->fetch();
                         $firstName = ($u && !empty($u['first_name'])) ? $u['first_name'] : 'User';
 
-                        $personalizedText = str_ireplace('{name}', $firstName, $newMessage);
+                        $personalizedText = str_ireplace('{name}', $firstName, $textToEdit);
                         $personalizedText = str_ireplace('{first_name}', $firstName, $personalizedText);
 
-                        editTelegramMessagePHP($msg['tg_id'], $msg['telegram_message_id'], $personalizedText, $newImageUrl);
+                        editTelegramMessagePHP($msg['tg_id'], $msg['telegram_message_id'], $personalizedText, $newImageUrl, $newBtnText, $newBtnUrl);
                         $updatedCount++;
                     } catch (Exception $e) {
                         $failedCount++;
@@ -1307,6 +1333,106 @@ if (strpos($route, '/admin/broadcasts/') === 0) {
             } catch (Exception $e) {
                 http_response_code(500);
                 echo json_encode(['error' => 'Failed to delete broadcast', 'details' => $e->getMessage()]);
+            }
+            exit;
+        }
+    }
+}
+
+// ─── ROUTE: /admin/broadcasts/:id/messages (GET) ────────────────
+if (strpos($route, '/admin/broadcasts/') === 0 && strpos($route, '/messages') !== false) {
+    $parts = explode('/', trim($route, '/'));
+    if (count($parts) === 4 && $parts[1] === 'broadcasts' && $parts[3] === 'messages') {
+        $broadcastId = (int)$parts[2];
+        try {
+            $stmt = $pdo->prepare('
+                SELECT bm.*, a.first_name, a.username 
+                FROM broadcast_messages bm 
+                LEFT JOIN auth a ON bm.tg_id = a.tg_id 
+                WHERE bm.broadcast_id = :id
+                ORDER BY bm.created_at ASC
+            ');
+            $stmt->execute(['id' => $broadcastId]);
+            $rows = $stmt->fetchAll();
+            foreach ($rows as &$r) {
+                $r['id'] = (int)$r['id'];
+                $r['broadcast_id'] = (int)$r['broadcast_id'];
+                $r['telegram_message_id'] = (int)$r['telegram_message_id'];
+            }
+            echo json_encode($rows);
+        } catch (Exception $e) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Failed to load broadcast messages', 'details' => $e->getMessage()]);
+        }
+        exit;
+    }
+}
+
+// ─── ROUTE: /admin/broadcasts/messages/:msg_id (PUT / DELETE) ───
+if (strpos($route, '/admin/broadcasts/messages/') === 0) {
+    $parts = explode('/', trim($route, '/'));
+    if (count($parts) === 4 && $parts[2] === 'messages') {
+        $msgId = (int)$parts[3];
+
+        if ($method === 'PUT') {
+            try {
+                $newMessage = isset($requestData['message']) ? $requestData['message'] : '';
+                $newImageUrl = isset($requestData['imageUrl']) ? $requestData['imageUrl'] : null;
+
+                $stmt = $pdo->prepare('
+                    SELECT bm.*, b.btn_text, b.btn_url 
+                    FROM broadcast_messages bm 
+                    JOIN broadcasts b ON bm.broadcast_id = b.id 
+                    WHERE bm.id = :id AND bm.status = "sent"
+                ');
+                $stmt->execute(['id' => $msgId]);
+                $msgRecord = $stmt->fetch();
+
+                if (!$msgRecord) {
+                    http_response_code(404);
+                    echo json_encode(['error' => 'Sent message record not found or already failed']);
+                    exit;
+                }
+
+                // Edit on Telegram
+                editTelegramMessagePHP(
+                    $msgRecord['tg_id'], 
+                    $msgRecord['telegram_message_id'], 
+                    $newMessage, 
+                    $newImageUrl, 
+                    $msgRecord['btn_text'], 
+                    $msgRecord['btn_url']
+                );
+
+                // Save custom message back to DB
+                $stmtUpdate = $pdo->prepare('UPDATE broadcast_messages SET custom_message = :msg WHERE id = :id');
+                $stmtUpdate->execute(['msg' => $newMessage, 'id' => $msgId]);
+
+                echo json_encode(['success' => true]);
+            } catch (Exception $e) {
+                http_response_code(500);
+                echo json_encode(['error' => 'Failed to update user message', 'details' => $e->getMessage()]);
+            }
+            exit;
+        }
+
+        if ($method === 'DELETE') {
+            try {
+                $stmt = $pdo->prepare('SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE id = :id AND status = "sent"');
+                $stmt->execute(['id' => $msgId]);
+                $msgRecord = $stmt->fetch();
+
+                if ($msgRecord) {
+                    deleteTelegramMessagePHP($msgRecord['tg_id'], $msgRecord['telegram_message_id']);
+                }
+
+                $stmtDel = $pdo->prepare('DELETE FROM broadcast_messages WHERE id = :id');
+                $stmtDel->execute(['id' => $msgId]);
+
+                echo json_encode(['success' => true]);
+            } catch (Exception $e) {
+                http_response_code(500);
+                echo json_encode(['error' => 'Failed to delete user message', 'details' => $e->getMessage()]);
             }
             exit;
         }

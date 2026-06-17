@@ -65,6 +65,8 @@ const app = express();
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     message TEXT NOT NULL,
                     image_url VARCHAR(512) DEFAULT NULL,
+                    btn_text VARCHAR(255) DEFAULT 'Open App 🎵',
+                    btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlify.app/',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             `);
@@ -78,10 +80,16 @@ const app = express();
                     telegram_message_id INT NOT NULL,
                     status VARCHAR(50) DEFAULT 'sent',
                     error_message TEXT DEFAULT NULL,
+                    custom_message TEXT DEFAULT NULL,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (broadcast_id) REFERENCES broadcasts(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             `);
+
+            // Alter tables to add new columns if they exist
+            try { await conn.execute("ALTER TABLE broadcasts ADD COLUMN btn_text VARCHAR(255) DEFAULT 'Open App 🎵'"); } catch (e) {}
+            try { await conn.execute("ALTER TABLE broadcasts ADD COLUMN btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlify.app/'"); } catch (e) {}
+            try { await conn.execute("ALTER TABLE broadcast_messages ADD COLUMN custom_message TEXT DEFAULT NULL"); } catch (e) {}
 
             // Ensure custom_description column exists in service_custom
             try {
