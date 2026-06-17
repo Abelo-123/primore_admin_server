@@ -1028,7 +1028,7 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
             $broadcastId = $pdo->lastInsertId();
 
             if (isset($tgRes['ok']) && $tgRes['ok'] && isset($tgRes['result']['message_id'])) {
-                $stmtM = $pdo->prepare('INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (:b_id, :tg, :msg_id, "sent", NULL, NOW())');
+                $stmtM = $pdo->prepare("INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (:b_id, :tg, :msg_id, 'sent', NULL, NOW())");
                 $stmtM->execute([
                     'b_id'   => $broadcastId,
                     'tg'     => $target,
