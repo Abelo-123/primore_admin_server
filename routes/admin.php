@@ -277,13 +277,15 @@ if ($route === '/admin/dashboard' && $method === 'GET') {
         ]);
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode([
+        $debugData = [
             'error' => 'Failed to load dashboard',
             'details' => $e->getMessage(),
             'failed_at_step' => $step,
             'bot_id_header' => $botIdHeader,
             'trace' => $e->getTraceAsString()
-        ]);
+        ];
+        file_put_contents(__DIR__ . '/dashboard_error.log', print_r($debugData, true));
+        echo json_encode($debugData);
     }
     exit;
 }
