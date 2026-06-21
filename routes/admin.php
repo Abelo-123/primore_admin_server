@@ -223,23 +223,29 @@ function formatUserRow($row) {
 
 // ─── ROUTE: /admin/dashboard (GET) ──────────────────────────────
 if ($route === '/admin/dashboard' && $method === 'GET') {
+    $step = 'start';
     try {
+        $step = 'querying totalUsers count';
         $stmt = $pdo->prepare('SELECT COUNT(*) as totalUsers FROM auth WHERE bot_id = :bot_id');
         $stmt->execute(['bot_id' => $botIdHeader]);
         $totalUsers = (int)$stmt->fetch()['totalUsers'];
 
+        $step = 'querying totalOrders count';
         $stmt = $pdo->prepare('SELECT COUNT(*) as totalOrders FROM orders WHERE bot_id = :bot_id');
         $stmt->execute(['bot_id' => $botIdHeader]);
         $totalOrders = (int)$stmt->fetch()['totalOrders'];
 
+        $step = 'querying totalDeposits count';
         $stmt = $pdo->prepare("SELECT COUNT(*) as totalDeposits FROM deposits WHERE status IN ('completed', 'success') AND bot_id = :bot_id");
         $stmt->execute(['bot_id' => $botIdHeader]);
         $totalDeposits = (int)$stmt->fetch()['totalDeposits'];
 
+        $step = 'querying totalRevenue count';
         $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success') AND bot_id = :bot_id");
         $stmt->execute(['bot_id' => $botIdHeader]);
         $totalRevenue = (float)$stmt->fetch()['totalRevenue'];
 
+        $step = 'querying recentOrders';
         $stmt = $pdo->prepare("
             SELECT o.*, a.username, a.first_name 
             FROM orders o 
@@ -250,6 +256,7 @@ if ($route === '/admin/dashboard' && $method === 'GET') {
         $stmt->execute(['bot_id' => $botIdHeader]);
         $recentOrders = array_map('formatOrderRow', $stmt->fetchAll());
 
+        $step = 'querying recentDeposits';
         $stmt = $pdo->prepare("
             SELECT d.*, a.username, a.first_name 
             FROM deposits d 
@@ -270,7 +277,13 @@ if ($route === '/admin/dashboard' && $method === 'GET') {
         ]);
     } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(['error' => 'Failed to load dashboard', 'details' => $e->getMessage()]);
+        echo json_encode([
+            'error' => 'Failed to load dashboard',
+            'details' => $e->getMessage(),
+            'failed_at_step' => $step,
+            'bot_id_header' => $botIdHeader,
+            'trace' => $e->getTraceAsString()
+        ]);
     }
     exit;
 }
