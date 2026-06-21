@@ -49,6 +49,8 @@ try {
     try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN btn_text VARCHAR(255) DEFAULT 'Open App 🎵'"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlify.app/'"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE broadcast_messages ADD COLUMN custom_message TEXT DEFAULT NULL"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN bot_id VARCHAR(50) DEFAULT NULL"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE broadcast_messages ADD COLUMN bot_id VARCHAR(50) DEFAULT NULL"); } catch (Exception $e) {}
 } catch (PDOException $e) {
     // Fail silently
 }
@@ -57,20 +59,34 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 // Check auth
 $authHeader = '';
+$botTokenHeader = '';
+$botIdHeader = '';
+
 if (isset($_SERVER['HTTP_AUTHORIZATION'])) {
     $authHeader = $_SERVER['HTTP_AUTHORIZATION'];
 } elseif (isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
     $authHeader = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
 } elseif (function_exists('apache_request_headers')) {
     $headers = apache_request_headers();
-    if (isset($headers['Authorization'])) {
-        $authHeader = $headers['Authorization'];
-    } elseif (isset($headers['authorization'])) {
-        $authHeader = $headers['authorization'];
-    }
+    if (isset($headers['Authorization'])) $authHeader = $headers['Authorization'];
+    elseif (isset($headers['authorization'])) $authHeader = $headers['authorization'];
 }
 
-$adminPass = getEnvVar('ADMIN_PASSWORD', 'paxyo2026');
+if (isset($_SERVER['HTTP_X_BOT_TOKEN'])) {
+    $botTokenHeader = $_SERVER['HTTP_X_BOT_TOKEN'];
+} elseif (function_exists('apache_request_headers')) {
+    $headers = apache_request_headers();
+    if (isset($headers['X-Bot-Token'])) $botTokenHeader = $headers['X-Bot-Token'];
+    elseif (isset($headers['x-bot-token'])) $botTokenHeader = $headers['x-bot-token'];
+}
+
+if (isset($_SERVER['HTTP_X_BOT_ID'])) {
+    $botIdHeader = $_SERVER['HTTP_X_BOT_ID'];
+} elseif (function_exists('apache_request_headers')) {
+    $headers = apache_request_headers();
+    if (isset($headers['X-Bot-Id'])) $botIdHeader = $headers['X-Bot-Id'];
+    elseif (isset($headers['x-bot-id'])) $botIdHeader = $headers['x-bot-id'];
+}
 
 $providedPass = '';
 if (preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
@@ -79,20 +95,55 @@ if (preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
 
 // ─── ROUTE: /admin/login (POST) ─────────────────────────────────
 if ($route === '/admin/login' && $method === 'POST') {
-    $password = isset($requestData['password']) ? $requestData['password'] : '';
-    if ($password === $adminPass) {
-        echo json_encode(['success' => true, 'token' => $adminPass]);
+    $botToken = isset($requestData['botToken']) ? trim($requestData['botToken']) : '';
+    $password = isset($requestData['password']) ? trim($requestData['password']) : '';
+    
+    if (empty($botToken) || strpos($botToken, ':') === false) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Valid Bot Token is required']);
+        exit;
+    }
+    
+    $parts = explode(':', $botToken);
+    $botId = $parts[0];
+    
+    // Look up admin password in settings for this bot
+    $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = :bot_id");
+    $stmt->execute(['bot_id' => $botId]);
+    $row = $stmt->fetch();
+    
+    if (!$row) {
+        // Self-initialize password
+        $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('admin_password', :bot_id, :password)");
+        $stmt->execute(['bot_id' => $botId, 'password' => $password]);
+        
+        echo json_encode(['success' => true, 'token' => $password, 'botId' => $botId, 'message' => 'Admin account initialized!']);
     } else {
-        http_response_code(401);
-        echo json_encode(['success' => false, 'error' => 'Invalid password']);
+        $storedPass = $row['setting_value'];
+        if ($password === $storedPass) {
+            echo json_encode(['success' => true, 'token' => $password, 'botId' => $botId]);
+        } else {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'error' => 'Invalid password']);
+        }
     }
     exit;
 }
 
 if ($route !== '/admin/login') {
-    if (empty($providedPass) || $providedPass !== $adminPass) {
+    if (empty($botIdHeader) || empty($providedPass)) {
         http_response_code(401);
-        echo json_encode(['error' => 'Unauthorized']);
+        echo json_encode(['error' => 'Unauthorized: Missing credentials headers']);
+        exit;
+    }
+    
+    $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = :bot_id");
+    $stmt->execute(['bot_id' => $botIdHeader]);
+    $row = $stmt->fetch();
+    
+    if (!$row || $providedPass !== $row['setting_value']) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Unauthorized: Invalid credentials']);
         exit;
     }
 }
@@ -134,32 +185,40 @@ function formatUserRow($row) {
 // ─── ROUTE: /admin/dashboard (GET) ──────────────────────────────
 if ($route === '/admin/dashboard' && $method === 'GET') {
     try {
-        $stmt = $pdo->query('SELECT COUNT(*) as totalUsers FROM auth');
+        $stmt = $pdo->prepare('SELECT COUNT(*) as totalUsers FROM auth WHERE bot_id = :bot_id');
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $totalUsers = (int)$stmt->fetch()['totalUsers'];
 
-        $stmt = $pdo->query('SELECT COUNT(*) as totalOrders FROM orders');
+        $stmt = $pdo->prepare('SELECT COUNT(*) as totalOrders FROM orders WHERE bot_id = :bot_id');
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $totalOrders = (int)$stmt->fetch()['totalOrders'];
 
-        $stmt = $pdo->query("SELECT COUNT(*) as totalDeposits FROM deposits WHERE status IN ('completed', 'success')");
+        $stmt = $pdo->prepare("SELECT COUNT(*) as totalDeposits FROM deposits WHERE status IN ('completed', 'success') AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $totalDeposits = (int)$stmt->fetch()['totalDeposits'];
 
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success')");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success') AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $totalRevenue = (float)$stmt->fetch()['totalRevenue'];
 
-        $stmt = $pdo->query("
+        $stmt = $pdo->prepare("
             SELECT o.*, a.username, a.first_name 
             FROM orders o 
-            LEFT JOIN auth a ON o.user_id = a.tg_id 
+            LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = :bot_id
+            WHERE o.bot_id = :bot_id
             ORDER BY o.created_at DESC LIMIT 10
         ");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $recentOrders = array_map('formatOrderRow', $stmt->fetchAll());
 
-        $stmt = $pdo->query("
+        $stmt = $pdo->prepare("
             SELECT d.*, a.username, a.first_name 
             FROM deposits d 
-            LEFT JOIN auth a ON d.user_id = a.tg_id 
+            LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = :bot_id
+            WHERE d.bot_id = :bot_id
             ORDER BY d.created_at DESC LIMIT 10
         ");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $recentDeposits = array_map('formatDepositRow', $stmt->fetchAll());
 
         echo json_encode([
@@ -189,7 +248,8 @@ if ($route === '/admin/users' && $method === 'GET') {
 
         $whereClause = '';
         $params = [];
-        $conditions = [];
+        $conditions = ['bot_id = :bot_id'];
+        $params['bot_id'] = $botIdHeader;
 
         if (!empty($search)) {
             $conditions[] = '(tg_id LIKE :s1 OR username LIKE :s2 OR first_name LIKE :s3 OR last_name LIKE :s4)';
@@ -260,11 +320,11 @@ if ($route === '/admin/users/balance' && $method === 'POST') {
 
         $pdo->beginTransaction();
 
-        $stmt = $pdo->prepare('UPDATE auth SET balance = balance + :amount WHERE tg_id = :tg_id');
-        $stmt->execute(['amount' => $amount, 'tg_id' => $tgId]);
+        $stmt = $pdo->prepare('UPDATE auth SET balance = balance + :amount WHERE tg_id = :tg_id AND bot_id = :bot_id');
+        $stmt->execute(['amount' => $amount, 'tg_id' => $tgId, 'bot_id' => $botIdHeader]);
 
-        $stmt = $pdo->prepare('SELECT balance FROM auth WHERE tg_id = :tg_id');
-        $stmt->execute(['tg_id' => $tgId]);
+        $stmt = $pdo->prepare('SELECT balance FROM auth WHERE tg_id = :tg_id AND bot_id = :bot_id');
+        $stmt->execute(['tg_id' => $tgId, 'bot_id' => $botIdHeader]);
         $user = $stmt->fetch();
 
         if (!$user) {
@@ -279,10 +339,10 @@ if ($route === '/admin/users/balance' && $method === 'POST') {
         // Log transaction
         $txType = ($amount >= 0) ? 'bonus' : 'refund';
         $stmt = $pdo->prepare("
-            INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, description, created_at)
-            VALUES (:tg_id, :type, :amount, :balance_after, 'admin', 'Admin balance adjustment', NOW())
+            INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, description, bot_id, created_at)
+            VALUES (:tg_id, :type, :amount, :balance_after, 'admin', 'Admin balance adjustment', :bot_id, NOW())
         ");
-        $stmt->execute(['tg_id' => $tgId, 'type' => $txType, 'amount' => $amount, 'balance_after' => $newBalance]);
+        $stmt->execute(['tg_id' => $tgId, 'type' => $txType, 'amount' => $amount, 'balance_after' => $newBalance, 'bot_id' => $botIdHeader]);
 
         $pdo->commit();
 
@@ -307,8 +367,8 @@ if ($route === '/admin/users/role' && $method === 'POST') {
             exit;
         }
 
-        $stmt = $pdo->prepare('UPDATE auth SET role = :role WHERE tg_id = :tg_id');
-        $stmt->execute(['role' => $role, 'tg_id' => $tgId]);
+        $stmt = $pdo->prepare('UPDATE auth SET role = :role WHERE tg_id = :tg_id AND bot_id = :bot_id');
+        $stmt->execute(['role' => $role, 'tg_id' => $tgId, 'bot_id' => $botIdHeader]);
 
         echo json_encode(['success' => true]);
     } catch (Exception $e) {
@@ -333,11 +393,11 @@ if ($route === '/admin/alerts' && $method === 'POST') {
         }
 
         if ($target === 'all') {
-            $stmt = $pdo->prepare('INSERT INTO alerts (user_id, title, message, type) SELECT tg_id, :title, :message, :type FROM auth');
-            $stmt->execute(['title' => $title, 'message' => $message, 'type' => $type]);
+            $stmt = $pdo->prepare('INSERT INTO alerts (user_id, title, message, type, bot_id) SELECT tg_id, :title, :message, :type, :bot_id FROM auth WHERE bot_id = :bot_id');
+            $stmt->execute(['title' => $title, 'message' => $message, 'type' => $type, 'bot_id' => $botIdHeader]);
         } else {
-            $stmt = $pdo->prepare('INSERT INTO alerts (user_id, title, message, type) VALUES (:target, :title, :message, :type)');
-            $stmt->execute(['target' => $target, 'title' => $title, 'message' => $message, 'type' => $type]);
+            $stmt = $pdo->prepare('INSERT INTO alerts (user_id, title, message, type, bot_id) VALUES (:target, :title, :message, :type, :bot_id)');
+            $stmt->execute(['target' => $target, 'title' => $title, 'message' => $message, 'type' => $type, 'bot_id' => $botIdHeader]);
         }
 
         echo json_encode(['success' => true]);
@@ -357,8 +417,8 @@ if ($route === '/admin/orders' && $method === 'GET') {
         $status = isset($requestData['status']) ? $requestData['status'] : '';
         $offset = ($page - 1) * $limit;
 
-        $whereClause = 'WHERE 1=1';
-        $params = [];
+        $whereClause = 'WHERE o.bot_id = :bot_id';
+        $params = ['bot_id' => $botIdHeader];
 
         if (!empty($search)) {
             $whereClause .= ' AND (o.user_id LIKE :s1 OR a.username LIKE :s2 OR a.first_name LIKE :s3 OR o.target_link LIKE :s4)';
@@ -374,7 +434,7 @@ if ($route === '/admin/orders' && $method === 'GET') {
         }
 
         // Total
-        $countQuery = "SELECT COUNT(*) as total FROM orders o LEFT JOIN auth a ON o.user_id = a.tg_id {$whereClause}";
+        $countQuery = "SELECT COUNT(*) as total FROM orders o LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = :bot_id {$whereClause}";
         $stmt = $pdo->prepare($countQuery);
         $stmt->execute($params);
         $total = (int)$stmt->fetch()['total'];
@@ -383,7 +443,7 @@ if ($route === '/admin/orders' && $method === 'GET') {
         $dataQuery = "
             SELECT o.*, a.username, a.first_name 
             FROM orders o 
-            LEFT JOIN auth a ON o.user_id = a.tg_id 
+            LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = :bot_id
             {$whereClause} 
             ORDER BY o.created_at DESC LIMIT :limit OFFSET :offset
         ";
@@ -414,8 +474,8 @@ if ($route === '/admin/deposits' && $method === 'GET') {
         $status = isset($requestData['status']) ? $requestData['status'] : '';
         $offset = ($page - 1) * $limit;
 
-        $whereClause = 'WHERE 1=1';
-        $params = [];
+        $whereClause = 'WHERE d.bot_id = :bot_id';
+        $params = ['bot_id' => $botIdHeader];
 
         if (!empty($search)) {
             $whereClause .= ' AND (d.user_id LIKE :s1 OR a.username LIKE :s2 OR a.first_name LIKE :s3 OR d.tx_ref LIKE :s4)';
@@ -431,7 +491,7 @@ if ($route === '/admin/deposits' && $method === 'GET') {
         }
 
         // Total
-        $countQuery = "SELECT COUNT(*) as total FROM deposits d LEFT JOIN auth a ON d.user_id = a.tg_id {$whereClause}";
+        $countQuery = "SELECT COUNT(*) as total FROM deposits d LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = :bot_id {$whereClause}";
         $stmt = $pdo->prepare($countQuery);
         $stmt->execute($params);
         $total = (int)$stmt->fetch()['total'];
@@ -440,33 +500,17 @@ if ($route === '/admin/deposits' && $method === 'GET') {
         $dataQuery = "
             SELECT d.*, a.username, a.first_name 
             FROM deposits d 
-            LEFT JOIN auth a ON d.user_id = a.tg_id 
+            LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = :bot_id
             {$whereClause} 
             ORDER BY d.created_at DESC LIMIT :limit OFFSET :offset
         ";
         $stmt = $pdo->prepare($dataQuery);
-        foreach ($params as $key => $val) {
-            $stmt->bindValue(":{$key}", $val, PDO::PARAM_STR);
-        }
-        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-        $stmt->execute();
-
-        $deposits = array_map('formatDepositRow', $stmt->fetchAll());
-
-        echo json_encode(['deposits' => $deposits, 'total' => $total]);
-    } catch (Exception $e) {
-        http_response_code(500);
-        echo json_encode(['error' => 'Failed to load deposits', 'details' => $e->getMessage()]);
-    }
-    exit;
-}
-
-// ─── ROUTE: /admin/settings (GET / POST) ─────────────────────────
+        foreach ($params as $key =>// ─── ROUTE: /admin/settings (GET / POST) ─────────────────────────
 if ($route === '/admin/settings') {
     if ($method === 'GET') {
         try {
-            $stmt = $pdo->query('SELECT setting_key, setting_value FROM settings');
+            $stmt = $pdo->prepare('SELECT setting_key, setting_value FROM settings WHERE bot_id = :bot_id');
+            $stmt->execute(['bot_id' => $botIdHeader]);
             $rows = $stmt->fetchAll();
             $settings = [];
             foreach ($rows as $r) {
@@ -497,8 +541,8 @@ if ($route === '/admin/settings') {
                 exit;
             }
 
-            $stmt = $pdo->prepare('INSERT INTO settings (setting_key, setting_value) VALUES (:key, :value) ON DUPLICATE KEY UPDATE setting_value = :value_update');
-            $stmt->execute(['key' => $key, 'value' => $value, 'value_update' => $value]);
+            $stmt = $pdo->prepare('INSERT INTO settings (setting_key, bot_id, setting_value) VALUES (:key, :bot_id, :value) ON DUPLICATE KEY UPDATE setting_value = :value_update');
+            $stmt->execute(['key' => $key, 'bot_id' => $botIdHeader, 'value' => $value, 'value_update' => $value]);
 
             echo json_encode(['success' => true]);
         } catch (Exception $e) {
@@ -513,7 +557,8 @@ if ($route === '/admin/settings') {
 if ($route === '/admin/services/custom') {
     if ($method === 'GET') {
         try {
-            $stmt = $pdo->query('SELECT * FROM service_custom ORDER BY updated_at DESC');
+            $stmt = $pdo->prepare('SELECT * FROM service_custom WHERE bot_id = :bot_id ORDER BY updated_at DESC');
+            $stmt->execute(['bot_id' => $botIdHeader]);
             $rows = $stmt->fetchAll();
             
             // Normalize columns
@@ -544,8 +589,8 @@ if ($route === '/admin/services/custom') {
             }
 
             $stmt = $pdo->prepare('
-                INSERT INTO service_custom (service_id, custom_rate, profit_margin, is_enabled, custom_description, updated_at) 
-                VALUES (:service_id, :custom_rate, :profit_margin, :is_enabled, :desc, NOW()) 
+                INSERT INTO service_custom (service_id, bot_id, custom_rate, profit_margin, is_enabled, custom_description, updated_at) 
+                VALUES (:service_id, :bot_id, :custom_rate, :profit_margin, :is_enabled, :desc, NOW()) 
                 ON DUPLICATE KEY UPDATE 
                 custom_rate = :custom_rate_update,
                 profit_margin = :profit_margin_update,
@@ -555,6 +600,7 @@ if ($route === '/admin/services/custom') {
             ');
             $stmt->execute([
                 'service_id'           => $serviceId,
+                'bot_id'               => $botIdHeader,
                 'custom_rate'          => $customRate,
                 'profit_margin'        => $profitMargin,
                 'is_enabled'           => $isEnabled,
@@ -584,8 +630,8 @@ if (strpos($route, '/admin/services/custom/') === 0 && $method === 'DELETE') {
             exit;
         }
 
-        $stmt = $pdo->prepare('DELETE FROM service_custom WHERE service_id = :service_id');
-        $stmt->execute(['service_id' => $serviceId]);
+        $stmt = $pdo->prepare('DELETE FROM service_custom WHERE service_id = :service_id AND bot_id = :bot_id');
+        $stmt->execute(['service_id' => $serviceId, 'bot_id' => $botIdHeader]);
 
         echo json_encode(['success' => true]);
     } catch (Exception $e) {
@@ -598,12 +644,14 @@ if (strpos($route, '/admin/services/custom/') === 0 && $method === 'DELETE') {
 // ─── ROUTE: /admin/services/activity (GET) ───────────────────────
 if ($route === '/admin/services/activity' && $method === 'GET') {
     try {
-        $stmt = $pdo->query('
+        $stmt = $pdo->prepare('
             SELECT sc.*, a.username, a.first_name 
             FROM service_custom sc 
-            LEFT JOIN auth a ON sc.updated_by = a.tg_id
+            LEFT JOIN auth a ON sc.updated_by = a.tg_id AND a.bot_id = :bot_id
+            WHERE sc.bot_id = :bot_id
             ORDER BY sc.updated_at DESC LIMIT 20
         ');
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $rows = $stmt->fetchAll();
         foreach ($rows as &$r) {
             $r['id'] = (int)$r['id'];
@@ -623,7 +671,8 @@ if ($route === '/admin/services/activity' && $method === 'GET') {
 // ─── ROUTE: /admin/services/disabled (GET) ───────────────────────
 if ($route === '/admin/services/disabled' && $method === 'GET') {
     try {
-        $stmt = $pdo->query('SELECT * FROM service_custom WHERE is_enabled = 0 ORDER BY updated_at DESC');
+        $stmt = $pdo->prepare('SELECT * FROM service_custom WHERE is_enabled = 0 AND bot_id = :bot_id ORDER BY updated_at DESC');
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $rows = $stmt->fetchAll();
         foreach ($rows as &$r) {
             $r['id'] = (int)$r['id'];
@@ -643,13 +692,15 @@ if ($route === '/admin/services/disabled' && $method === 'GET') {
 // ─── ROUTE: /admin/chat/sessions (GET) ───────────────────────────
 if ($route === '/admin/chat/sessions' && $method === 'GET') {
     try {
-        $stmt = $pdo->query('
+        $stmt = $pdo->prepare('
             SELECT c.user_id, a.username, a.first_name, MAX(c.created_at) as last_message_at
             FROM chat_messages c
-            LEFT JOIN auth a ON c.user_id = a.tg_id
+            LEFT JOIN auth a ON c.user_id = a.tg_id AND a.bot_id = :bot_id
+            WHERE c.bot_id = :bot_id
             GROUP BY c.user_id, a.username, a.first_name
             ORDER BY last_message_at DESC
         ');
+        $stmt->execute(['bot_id' => $botIdHeader]);
         echo json_encode($stmt->fetchAll());
     } catch (Exception $e) {
         http_response_code(500);
@@ -666,8 +717,8 @@ if (strpos($route, '/admin/chat/') === 0 && !strpos($route, '/sessions')) {
         
         if ($method === 'GET') {
             try {
-                $stmt = $pdo->prepare('SELECT * FROM chat_messages WHERE user_id = :user_id ORDER BY created_at ASC');
-                $stmt->execute(['user_id' => $userId]);
+                $stmt = $pdo->prepare('SELECT * FROM chat_messages WHERE user_id = :user_id AND bot_id = :bot_id ORDER BY created_at ASC');
+                $stmt->execute(['user_id' => $userId, 'bot_id' => $botIdHeader]);
                 $rows = $stmt->fetchAll();
                 
                 foreach ($rows as &$r) {
@@ -688,12 +739,12 @@ if (strpos($route, '/admin/chat/') === 0 && !strpos($route, '/sessions')) {
                     exit;
                 }
 
-                $stmt = $pdo->prepare('INSERT INTO chat_messages (user_id, message, is_admin, created_at) VALUES (:user_id, :message, 1, NOW())');
-                $stmt->execute(['user_id' => $userId, 'message' => $message]);
+                $stmt = $pdo->prepare('INSERT INTO chat_messages (user_id, message, is_admin, bot_id, created_at) VALUES (:user_id, :message, 1, :bot_id, NOW())');
+                $stmt->execute(['user_id' => $userId, 'message' => $message, 'bot_id' => $botIdHeader]);
 
                 // Create alert notification for user
-                $stmt = $pdo->prepare("INSERT INTO alerts (user_id, title, message, type) VALUES (:user_id, 'New Message', 'You have a new message from support', 'chat')");
-                $stmt->execute(['user_id' => $userId]);
+                $stmt = $pdo->prepare("INSERT INTO alerts (user_id, title, message, type, bot_id) VALUES (:user_id, 'New Message', 'You have a new message from support', 'chat', :bot_id)");
+                $stmt->execute(['user_id' => $userId, 'bot_id' => $botIdHeader]);
 
                 echo json_encode(['success' => true]);
             } catch (Exception $e) {
@@ -708,12 +759,14 @@ if (strpos($route, '/admin/chat/') === 0 && !strpos($route, '/sessions')) {
 // ─── ROUTE: /admin/withdrawals (GET) ─────────────────────────────
 if ($route === '/admin/withdrawals' && $method === 'GET') {
     try {
-        $stmt = $pdo->query('
+        $stmt = $pdo->prepare('
             SELECT w.*, a.username, a.first_name, a.last_name 
             FROM withdrawals w 
-            LEFT JOIN auth a ON w.user_id = a.tg_id 
+            LEFT JOIN auth a ON w.user_id = a.tg_id AND a.bot_id = :bot_id
+            WHERE w.bot_id = :bot_id
             ORDER BY w.created_at DESC
         ');
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $rows = $stmt->fetchAll();
         foreach ($rows as &$r) {
             $r['id'] = (int)$r['id'];
@@ -739,8 +792,8 @@ if ($route === '/admin/withdrawals/approve' && $method === 'POST') {
 
         $pdo->beginTransaction();
 
-        $stmt = $pdo->prepare('SELECT * FROM withdrawals WHERE id = :id FOR UPDATE');
-        $stmt->execute(['id' => $id]);
+        $stmt = $pdo->prepare('SELECT * FROM withdrawals WHERE id = :id AND bot_id = :bot_id FOR UPDATE');
+        $stmt->execute(['id' => $id, 'bot_id' => $botIdHeader]);
         $w = $stmt->fetch();
 
         if (!$w) {
@@ -758,14 +811,14 @@ if ($route === '/admin/withdrawals/approve' && $method === 'POST') {
         }
 
         // Update status to done
-        $stmt = $pdo->prepare("UPDATE withdrawals SET status = 'done' WHERE id = :id");
-        $stmt->execute(['id' => $id]);
+        $stmt = $pdo->prepare("UPDATE withdrawals SET status = 'done' WHERE id = :id AND bot_id = :bot_id");
+        $stmt->execute(['id' => $id, 'bot_id' => $botIdHeader]);
 
         // Notify user via alerts
         $amtFormatted = number_format((float)$w['amount'], 2);
         $message = "Your withdrawal request of {$amtFormatted} ETB has been marked as DONE and transferred to your bank account!";
-        $stmt = $pdo->prepare("INSERT INTO alerts (user_id, title, message, type) VALUES (:user_id, 'Withdrawal Done', :msg, 'success')");
-        $stmt->execute(['user_id' => $w['user_id'], 'msg' => $message]);
+        $stmt = $pdo->prepare("INSERT INTO alerts (user_id, title, message, type, bot_id) VALUES (:user_id, 'Withdrawal Done', :msg, 'success', :bot_id)");
+        $stmt->execute(['user_id' => $w['user_id'], 'msg' => $message, 'bot_id' => $botIdHeader]);
 
         $pdo->commit();
 
@@ -782,58 +835,74 @@ if ($route === '/admin/withdrawals/approve' && $method === 'POST') {
 if ($route === '/admin/finance-stats' && $method === 'GET') {
     try {
         // 1. Revenues
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success')");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success') AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $totalRevenue = (float)$stmt->fetch()['totalRevenue'];
 
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as todayRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= CURDATE()");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as todayRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= CURDATE() AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $todayRevenue = (float)$stmt->fetch()['todayRevenue'];
 
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as weeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as weeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $weeklyRevenue = (float)$stmt->fetch()['weeklyRevenue'];
 
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as monthlyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as monthlyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $monthlyRevenue = (float)$stmt->fetch()['monthlyRevenue'];
 
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as prevWeeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as prevWeeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY) AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $prevWeeklyRevenue = (float)$stmt->fetch()['prevWeeklyRevenue'];
 
         // 2. Withdrawals
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as totalWithdrawn FROM withdrawals WHERE status = 'done'");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as totalWithdrawn FROM withdrawals WHERE status = 'done' AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $totalWithdrawn = (float)$stmt->fetch()['totalWithdrawn'];
 
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as todayWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= CURDATE()");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as todayWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= CURDATE() AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $todayWithdrawals = (float)$stmt->fetch()['todayWithdrawals'];
 
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as weeklyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as weeklyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $weeklyWithdrawals = (float)$stmt->fetch()['weeklyWithdrawals'];
 
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as monthlyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as monthlyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $monthlyWithdrawals = (float)$stmt->fetch()['monthlyWithdrawals'];
 
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as pendingWithdrawals FROM withdrawals WHERE status = 'pending'");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as pendingWithdrawals FROM withdrawals WHERE status = 'pending' AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $pendingWithdrawals = (float)$stmt->fetch()['pendingWithdrawals'];
 
-        $stmt = $pdo->query("SELECT COUNT(*) as totalWithdrawalsCount FROM withdrawals");
+        $stmt = $pdo->prepare("SELECT COUNT(*) as totalWithdrawalsCount FROM withdrawals WHERE bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $totalWithdrawalsCount = (int)$stmt->fetch()['totalWithdrawalsCount'];
 
-        $stmt = $pdo->query("SELECT COALESCE(SUM(amount), 0) as totalWithdrawalsSum FROM withdrawals");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) as totalWithdrawalsSum FROM withdrawals WHERE bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $totalWithdrawalsSum = (float)$stmt->fetch()['totalWithdrawalsSum'];
 
         // 3. Wallet Balance
-        $stmt = $pdo->query("SELECT COALESCE(SUM(balance), 0) as withdrawableBalance FROM auth");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(balance), 0) as withdrawableBalance FROM auth WHERE bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $withdrawableBalance = (float)$stmt->fetch()['withdrawableBalance'];
 
         // 4. Paying Users
-        $stmt = $pdo->query("SELECT COUNT(DISTINCT user_id) as totalPayingUsers FROM deposits WHERE status IN ('completed', 'success')");
+        $stmt = $pdo->prepare("SELECT COUNT(DISTINCT user_id) as totalPayingUsers FROM deposits WHERE status IN ('completed', 'success') AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $totalPayingUsers = (int)$stmt->fetch()['totalPayingUsers'];
 
         // 5. Provider Costs
 
-        $stmt = $pdo->query("
+        $stmt = $pdo->prepare("
             SELECT o.*, sc.profit_margin, sc.custom_rate 
             FROM orders o 
-            LEFT JOIN service_custom sc ON o.service_id = sc.service_id
+            LEFT JOIN service_custom sc ON o.service_id = sc.service_id AND sc.bot_id = :bot_id
+            WHERE o.bot_id = :bot_id
         ");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $orders = $stmt->fetchAll();
         $providerCosts = 0.0;
         foreach ($orders as $o) {
@@ -888,7 +957,8 @@ if ($route === '/admin/finance-stats' && $method === 'GET') {
 
 // Helper to send Telegram message in PHP
 function sendTelegramMessagePHP($tgId, $message, $imageUrl) {
-    $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
+    global $botTokenHeader;
+    $token = !empty($botTokenHeader) ? $botTokenHeader : getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
     if (empty($token)) {
         throw new Exception('BOT_TOKEN is not configured');
     }
@@ -961,8 +1031,9 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
         }
 
         if ($target === 'all') {
-            // Broadcast to all users
-            $stmt = $pdo->query('SELECT tg_id, first_name, username FROM auth WHERE tg_id IS NOT NULL');
+            // Broadcast to all users for this bot
+            $stmt = $pdo->prepare('SELECT tg_id, first_name, username FROM auth WHERE tg_id IS NOT NULL AND bot_id = :bot_id');
+            $stmt->execute(['bot_id' => $botIdHeader]);
             $users = $stmt->fetchAll();
             
             $results = [];
@@ -1005,8 +1076,8 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
             // Send to a single user
             $personalizedText = $message ?: '';
             try {
-                $stmt = $pdo->prepare('SELECT first_name FROM auth WHERE tg_id = :tg_id LIMIT 1');
-                $stmt->execute(['tg_id' => $target]);
+                $stmt = $pdo->prepare('SELECT first_name FROM auth WHERE tg_id = :tg_id AND bot_id = :bot_id LIMIT 1');
+                $stmt->execute(['tg_id' => $target, 'bot_id' => $botIdHeader]);
                 $user = $stmt->fetch();
                 if ($user) {
                     $firstName = !empty($user['first_name']) ? $user['first_name'] : 'User';
@@ -1020,19 +1091,21 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
             $tgRes = sendTelegramMessagePHP($target, $personalizedText, $imageUrl);
 
             // Save to broadcasts history so it can be managed
-            $stmtB = $pdo->prepare("INSERT INTO broadcasts (message, image_url, btn_text, btn_url, created_at) VALUES (:msg, :img, 'Open App 🎵', 'https://musical-caramel-cae47e.netlify.app/', NOW())");
+            $stmtB = $pdo->prepare("INSERT INTO broadcasts (message, image_url, btn_text, btn_url, bot_id, created_at) VALUES (:msg, :img, 'Open App 🎵', 'https://musical-caramel-cae47e.netlifyapp/', :bot_id, NOW())");
             $stmtB->execute([
                 'msg' => $message ?: '',
-                'img' => $imageUrl
+                'img' => $imageUrl,
+                'bot_id' => $botIdHeader
             ]);
             $broadcastId = $pdo->lastInsertId();
 
             if (isset($tgRes['ok']) && $tgRes['ok'] && isset($tgRes['result']['message_id'])) {
-                $stmtM = $pdo->prepare("INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (:b_id, :tg, :msg_id, 'sent', NULL, NOW())");
+                $stmtM = $pdo->prepare("INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, bot_id, created_at) VALUES (:b_id, :tg, :msg_id, 'sent', NULL, :bot_id, NOW())");
                 $stmtM->execute([
                     'b_id'   => $broadcastId,
                     'tg'     => $target,
-                    'msg_id' => $tgRes['result']['message_id']
+                    'msg_id' => $tgRes['result']['message_id'],
+                    'bot_id' => $botIdHeader
                 ]);
             }
 
@@ -1047,7 +1120,8 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
 
 // Helper to send broadcast Telegram message (with custom button text/url support)
 function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlifyapp/') {
-    $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
+    global $botTokenHeader;
+    $token = !empty($botTokenHeader) ? $botTokenHeader : getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
     if (empty($token)) {
         throw new Exception('BOT_TOKEN is not configured');
     }
@@ -1101,7 +1175,8 @@ function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open Ap
 
 // Helper to edit Telegram message text/caption (with custom button text/url support)
 function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlifyapp/') {
-    $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
+    global $botTokenHeader;
+    $token = !empty($botTokenHeader) ? $botTokenHeader : getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
     if (empty($token)) {
         throw new Exception('BOT_TOKEN is not configured');
     }
@@ -1152,7 +1227,8 @@ function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null
 
 // Helper to delete Telegram message
 function deleteTelegramMessagePHP($tgId, $messageId) {
-    $token = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
+    global $botTokenHeader;
+    $token = !empty($botTokenHeader) ? $botTokenHeader : getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
     if (empty($token)) {
         throw new Exception('BOT_TOKEN is not configured');
     }
@@ -1177,13 +1253,15 @@ function deleteTelegramMessagePHP($tgId, $messageId) {
 // ─── ROUTE: /admin/broadcasts (GET) ─────────────────────────────
 if ($route === '/admin/broadcasts' && $method === 'GET') {
     try {
-        $stmt = $pdo->query("
+        $stmt = $pdo->prepare("
             SELECT b.*, 
-                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'sent') as sent_count,
-                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'failed') as failed_count
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'sent' AND bm.bot_id = :bot_id) as sent_count,
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'failed' AND bm.bot_id = :bot_id) as failed_count
             FROM broadcasts b
+            WHERE b.bot_id = :bot_id
             ORDER BY b.created_at DESC
         ");
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $rows = $stmt->fetchAll();
         foreach ($rows as &$r) {
             $r['id'] = (int)$r['id'];
@@ -1204,7 +1282,7 @@ if ($route === '/admin/broadcasts' && $method === 'POST') {
         $message = isset($requestData['message']) ? $requestData['message'] : null;
         $imageUrl = isset($requestData['imageUrl']) ? $requestData['imageUrl'] : null;
         $btnText = isset($requestData['btnText']) ? $requestData['btnText'] : 'Open App 🎵';
-        $btnUrl = isset($requestData['btnUrl']) ? $requestData['btnUrl'] : 'https://musical-caramel-cae47e.netlify.app/';
+        $btnUrl = isset($requestData['btnUrl']) ? $requestData['btnUrl'] : 'https://musical-caramel-cae47e.netlifyapp/';
 
         if (empty($message) && empty($imageUrl)) {
             http_response_code(400);
@@ -1212,24 +1290,26 @@ if ($route === '/admin/broadcasts' && $method === 'POST') {
             exit;
         }
 
-        $stmt = $pdo->prepare('INSERT INTO broadcasts (message, image_url, btn_text, btn_url, created_at) VALUES (:msg, :img, :btn_t, :btn_u, NOW())');
+        $stmt = $pdo->prepare('INSERT INTO broadcasts (message, image_url, btn_text, btn_url, bot_id, created_at) VALUES (:msg, :img, :btn_t, :btn_u, :bot_id, NOW())');
         $stmt->execute([
             'msg'   => $message ?: '',
             'img'   => $imageUrl,
             'btn_t' => $btnText,
-            'btn_u' => $btnUrl
+            'btn_u' => $btnUrl,
+            'bot_id'=> $botIdHeader
         ]);
         $broadcastId = $pdo->lastInsertId();
 
-        $stmt = $pdo->query('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL');
+        $stmt = $pdo->prepare('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL AND bot_id = :bot_id');
+        $stmt->execute(['bot_id' => $botIdHeader]);
         $users = $stmt->fetchAll();
 
         $sentCount = 0;
         $failedCount = 0;
 
         $stmtInsert = $pdo->prepare('
-            INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at)
-            VALUES (:broadcast_id, :tg_id, :msg_id, :status, :err, NOW())
+            INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, bot_id, created_at)
+            VALUES (:broadcast_id, :tg_id, :msg_id, :status, :err, :bot_id, NOW())
         ');
 
         foreach ($users as $user) {
@@ -1247,7 +1327,8 @@ if ($route === '/admin/broadcasts' && $method === 'POST') {
                         'tg_id'        => $user['tg_id'],
                         'msg_id'       => $msgId,
                         'status'       => 'sent',
-                        'err'          => null
+                        'err'          => null,
+                        'bot_id'       => $botIdHeader
                     ]);
                     $sentCount++;
                 } else {
@@ -1256,7 +1337,8 @@ if ($route === '/admin/broadcasts' && $method === 'POST') {
                         'tg_id'        => $user['tg_id'],
                         'msg_id'       => 0,
                         'status'       => 'failed',
-                        'err'          => 'Invalid Telegram response'
+                        'err'          => 'Invalid Telegram response',
+                        'bot_id'       => $botIdHeader
                     ]);
                     $failedCount++;
                 }
@@ -1266,7 +1348,8 @@ if ($route === '/admin/broadcasts' && $method === 'POST') {
                     'tg_id'        => $user['tg_id'],
                     'msg_id'       => 0,
                     'status'       => 'failed',
-                    'err'          => $e->getMessage()
+                    'err'          => $e->getMessage(),
+                    'bot_id'       => $botIdHeader
                 ]);
                 $failedCount++;
             }
@@ -1296,19 +1379,20 @@ if (strpos($route, '/admin/broadcasts/') === 0 && strpos($route, '/messages') ==
                 $newMessage = isset($requestData['message']) ? $requestData['message'] : '';
                 $newImageUrl = isset($requestData['imageUrl']) ? $requestData['imageUrl'] : null;
                 $newBtnText = isset($requestData['btnText']) ? $requestData['btnText'] : 'Open App 🎵';
-                $newBtnUrl = isset($requestData['btnUrl']) ? $requestData['btnUrl'] : 'https://musical-caramel-cae47e.netlify.app/';
+                $newBtnUrl = isset($requestData['btnUrl']) ? $requestData['btnUrl'] : 'https://musical-caramel-cae47e.netlifyapp/';
 
-                $stmt = $pdo->prepare('UPDATE broadcasts SET message = :msg, image_url = :img, btn_text = :btn_t, btn_url = :btn_u WHERE id = :id');
+                $stmt = $pdo->prepare('UPDATE broadcasts SET message = :msg, image_url = :img, btn_text = :btn_t, btn_url = :btn_u WHERE id = :id AND bot_id = :bot_id');
                 $stmt->execute([
                     'msg'   => $newMessage,
                     'img'   => $newImageUrl,
                     'btn_t' => $newBtnText,
                     'btn_u' => $newBtnUrl,
-                    'id'    => $broadcastId
+                    'id'    => $broadcastId,
+                    'bot_id'=> $botIdHeader
                 ]);
 
-                $stmt = $pdo->prepare("SELECT tg_id, telegram_message_id, custom_message FROM broadcast_messages WHERE broadcast_id = :id AND status = 'sent'");
-                $stmt->execute(['id' => $broadcastId]);
+                $stmt = $pdo->prepare("SELECT tg_id, telegram_message_id, custom_message FROM broadcast_messages WHERE broadcast_id = :id AND status = 'sent' AND bot_id = :bot_id");
+                $stmt->execute(['id' => $broadcastId, 'bot_id' => $botIdHeader]);
                 $messages = $stmt->fetchAll();
 
                 $updatedCount = 0;
@@ -1320,8 +1404,8 @@ if (strpos($route, '/admin/broadcasts/') === 0 && strpos($route, '/messages') ==
                         // Or if we do update it, use the customized message. Here we will update using their custom_message if set, otherwise fallback to global newMessage.
                         $textToEdit = !empty($msg['custom_message']) ? $msg['custom_message'] : $newMessage;
 
-                        $stmtUser = $pdo->prepare('SELECT first_name FROM auth WHERE tg_id = :tg_id LIMIT 1');
-                        $stmtUser->execute(['tg_id' => $msg['tg_id']]);
+                        $stmtUser = $pdo->prepare('SELECT first_name FROM auth WHERE tg_id = :tg_id AND bot_id = :bot_id LIMIT 1');
+                        $stmtUser->execute(['tg_id' => $msg['tg_id'], 'bot_id' => $botIdHeader]);
                         $u = $stmtUser->fetch();
                         $firstName = ($u && !empty($u['first_name'])) ? $u['first_name'] : 'User';
 
@@ -1349,8 +1433,8 @@ if (strpos($route, '/admin/broadcasts/') === 0 && strpos($route, '/messages') ==
 
         if ($method === 'DELETE') {
             try {
-                $stmt = $pdo->prepare("SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = :id AND status = 'sent'");
-                $stmt->execute(['id' => $broadcastId]);
+                $stmt = $pdo->prepare("SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = :id AND status = 'sent' AND bot_id = :bot_id");
+                $stmt->execute(['id' => $broadcastId, 'bot_id' => $botIdHeader]);
                 $messages = $stmt->fetchAll();
 
                 $deletedCount = 0;
@@ -1365,8 +1449,8 @@ if (strpos($route, '/admin/broadcasts/') === 0 && strpos($route, '/messages') ==
                     }
                 }
 
-                $stmt = $pdo->prepare('DELETE FROM broadcasts WHERE id = :id');
-                $stmt->execute(['id' => $broadcastId]);
+                $stmt = $pdo->prepare('DELETE FROM broadcasts WHERE id = :id AND bot_id = :bot_id');
+                $stmt->execute(['id' => $broadcastId, 'bot_id' => $botIdHeader]);
 
                 echo json_encode([
                     'success'       => true,
@@ -1391,11 +1475,11 @@ if (strpos($route, '/admin/broadcasts/') === 0 && strpos($route, '/messages') !=
             $stmt = $pdo->prepare('
                 SELECT bm.*, a.first_name, a.username 
                 FROM broadcast_messages bm 
-                LEFT JOIN auth a ON bm.tg_id = a.tg_id 
-                WHERE bm.broadcast_id = :id
+                LEFT JOIN auth a ON bm.tg_id = a.tg_id AND a.bot_id = :bot_id
+                WHERE bm.broadcast_id = :id AND bm.bot_id = :bot_id
                 ORDER BY bm.created_at ASC
             ');
-            $stmt->execute(['id' => $broadcastId]);
+            $stmt->execute(['id' => $broadcastId, 'bot_id' => $botIdHeader]);
             $rows = $stmt->fetchAll();
             foreach ($rows as &$r) {
                 $r['id'] = (int)$r['id'];
@@ -1426,9 +1510,9 @@ if (strpos($route, '/admin/broadcasts/messages/') === 0) {
                     SELECT bm.*, b.btn_text, b.btn_url 
                     FROM broadcast_messages bm 
                     JOIN broadcasts b ON bm.broadcast_id = b.id 
-                    WHERE bm.id = :id AND bm.status = 'sent'
+                    WHERE bm.id = :id AND bm.status = 'sent' AND bm.bot_id = :bot_id
                 ");
-                $stmt->execute(['id' => $msgId]);
+                $stmt->execute(['id' => $msgId, 'bot_id' => $botIdHeader]);
                 $msgRecord = $stmt->fetch();
 
                 if (!$msgRecord) {
@@ -1448,8 +1532,8 @@ if (strpos($route, '/admin/broadcasts/messages/') === 0) {
                 );
 
                 // Save custom message back to DB
-                $stmtUpdate = $pdo->prepare('UPDATE broadcast_messages SET custom_message = :msg WHERE id = :id');
-                $stmtUpdate->execute(['msg' => $newMessage, 'id' => $msgId]);
+                $stmtUpdate = $pdo->prepare('UPDATE broadcast_messages SET custom_message = :msg WHERE id = :id AND bot_id = :bot_id');
+                $stmtUpdate->execute(['msg' => $newMessage, 'id' => $msgId, 'bot_id' => $botIdHeader]);
 
                 echo json_encode(['success' => true]);
             } catch (Exception $e) {
@@ -1461,16 +1545,16 @@ if (strpos($route, '/admin/broadcasts/messages/') === 0) {
 
         if ($method === 'DELETE') {
             try {
-                $stmt = $pdo->prepare("SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE id = :id AND status = 'sent'");
-                $stmt->execute(['id' => $msgId]);
+                $stmt = $pdo->prepare("SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE id = :id AND status = 'sent' AND bot_id = :bot_id");
+                $stmt->execute(['id' => $msgId, 'bot_id' => $botIdHeader]);
                 $msgRecord = $stmt->fetch();
 
                 if ($msgRecord) {
                     deleteTelegramMessagePHP($msgRecord['tg_id'], $msgRecord['telegram_message_id']);
                 }
 
-                $stmtDel = $pdo->prepare('DELETE FROM broadcast_messages WHERE id = :id');
-                $stmtDel->execute(['id' => $msgId]);
+                $stmtDel = $pdo->prepare('DELETE FROM broadcast_messages WHERE id = :id AND bot_id = :bot_id');
+                $stmtDel->execute(['id' => $msgId, 'bot_id' => $botIdHeader]);
 
                 echo json_encode(['success' => true]);
             } catch (Exception $e) {
