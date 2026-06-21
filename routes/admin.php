@@ -168,6 +168,18 @@ if ($route === '/admin/login' && $method === 'POST') {
     exit;
 }
 
+// ─── ROUTE: /admin/debug-log (GET) ──────────────────────────────
+if ($route === '/admin/debug-log' && $method === 'GET') {
+    header('Content-Type: text/plain');
+    $logFile = __DIR__ . '/dashboard_error.log';
+    if (file_exists($logFile)) {
+        echo file_get_contents($logFile);
+    } else {
+        echo "No debug log file found at: " . $logFile;
+    }
+    exit;
+}
+
 if ($route !== '/admin/login' && $route !== '/admin/signup') {
     if (empty($botIdHeader) || empty($providedPass) || strpos($providedPass, ':') === false) {
         http_response_code(401);
@@ -179,6 +191,7 @@ if ($route !== '/admin/login' && $route !== '/admin/signup') {
     
     $stmt = $pdo->prepare("SELECT password FROM admin_users WHERE username = :username AND bot_id = :bot_id");
     $stmt->execute(['username' => $adminUser, 'bot_id' => $botIdHeader]);
+    $row = $stmt->fetch();
     
     if (!$row || $adminPass !== $row['password']) {
         http_response_code(401);
