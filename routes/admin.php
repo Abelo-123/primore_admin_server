@@ -4,9 +4,7 @@
  */
 
 require_once __DIR__ . '/../config.php';
-require_once __DIR__ . '/../auth.php';
-
-// Auto-create withdrawals table if it does not exist
+require_once __DIR__ . '/../auth.php';// Auto-create withdrawals table if it does not exist
 try {
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS withdrawals (
@@ -22,12 +20,23 @@ try {
     ");
 
     $pdo->exec("
+        CREATE TABLE IF NOT EXISTS admin_users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(255) NOT NULL,
+            password VARCHAR(255) NOT NULL,
+            bot_id VARCHAR(50) NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY username_bot_id (username, bot_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ");
+
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS broadcasts (
             id INT AUTO_INCREMENT PRIMARY KEY,
             message TEXT NOT NULL,
             image_url VARCHAR(512) DEFAULT NULL,
             btn_text VARCHAR(255) DEFAULT 'Open App 🎵',
-            btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlify.app/',
+            btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlifyapp/',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ");
@@ -47,7 +56,7 @@ try {
     ");
 
     try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN btn_text VARCHAR(255) DEFAULT 'Open App 🎵'"); } catch (Exception $e) {}
-    try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlify.app/'"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlifyapp/'"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE broadcast_messages ADD COLUMN custom_message TEXT DEFAULT NULL"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN bot_id VARCHAR(50) DEFAULT NULL"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE broadcast_messages ADD COLUMN bot_id VARCHAR(50) DEFAULT NULL"); } catch (Exception $e) {}
@@ -93,55 +102,85 @@ if (preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
     $providedPass = $matches[1];
 }
 
-// ─── ROUTE: /admin/login (POST) ─────────────────────────────────
-if ($route === '/admin/login' && $method === 'POST') {
+// ─── ROUTE: /admin/signup (POST) ────────────────────────────────
+if ($route === '/admin/signup' && $method === 'POST') {
     $botToken = isset($requestData['botToken']) ? trim($requestData['botToken']) : '';
+    $username = isset($requestData['username']) ? trim($requestData['username']) : '';
     $password = isset($requestData['password']) ? trim($requestData['password']) : '';
     
-    if (empty($botToken) || strpos($botToken, ':') === false) {
+    if (empty($botToken) || strpos($botToken, ':') === false || empty($username) || empty($password)) {
         http_response_code(400);
-        echo json_encode(['success' => false, 'error' => 'Valid Bot Token is required']);
+        echo json_encode(['success' => false, 'error' => 'Valid Bot Token, Username, and Password are required']);
         exit;
     }
     
     $parts = explode(':', $botToken);
     $botId = $parts[0];
     
-    // Look up admin password globally
-    $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = 'global'");
-    $stmt->execute();
-    $row = $stmt->fetch();
-    
-    if (!$row) {
-        // Self-initialize password globally
-        $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('admin_password', 'global', :password)");
-        $stmt->execute(['password' => $password]);
+    try {
+        $stmt = $pdo->prepare("INSERT INTO admin_users (username, password, bot_id) VALUES (:username, :password, :bot_id)");
+        $stmt->execute(['username' => $username, 'password' => $password, 'bot_id' => $botId]);
         
-        echo json_encode(['success' => true, 'token' => $password, 'botId' => $botId, 'message' => 'Admin account initialized!']);
-    } else {
-        $storedPass = $row['setting_value'];
-        if ($password === $storedPass) {
-            echo json_encode(['success' => true, 'token' => $password, 'botId' => $botId]);
+        echo json_encode(['success' => true, 'token' => "{$username}:{$password}", 'botId' => $botId]);
+    } catch (PDOException $e) {
+        if ($e->getCode() == 23000) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Username already exists for this bot']);
         } else {
-            http_response_code(401);
-            echo json_encode(['success' => false, 'error' => 'Invalid password']);
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'Failed to create admin user', 'details' => $e->getMessage()]);
         }
     }
     exit;
 }
 
-if ($route !== '/admin/login') {
-    if (empty($botIdHeader) || empty($providedPass)) {
-        http_response_code(401);
-        echo json_encode(['error' => 'Unauthorized: Missing credentials headers']);
+// ─── ROUTE: /admin/login (POST) ─────────────────────────────────
+if ($route === '/admin/login' && $method === 'POST') {
+    $botToken = isset($requestData['botToken']) ? trim($requestData['botToken']) : '';
+    $username = isset($requestData['username']) ? trim($requestData['username']) : '';
+    $password = isset($requestData['password']) ? trim($requestData['password']) : '';
+    
+    if (empty($botToken) || strpos($botToken, ':') === false || empty($username) || empty($password)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Valid Bot Token, Username, and Password are required']);
         exit;
     }
     
-    $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = 'global'");
-    $stmt->execute();
+    $parts = explode(':', $botToken);
+    $botId = $parts[0];
+    
+    $stmt = $pdo->prepare("SELECT password FROM admin_users WHERE username = :username AND bot_id = :bot_id");
+    $stmt->execute(['username' => $username, 'bot_id' => $botId]);
     $row = $stmt->fetch();
     
-    if (!$row || $providedPass !== $row['setting_value']) {
+    if (!$row) {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'error' => 'Admin account not found for this bot token. Please Sign Up first.']);
+        exit;
+    }
+    
+    if ($password === $row['password']) {
+        echo json_encode(['success' => true, 'token' => "{$username}:{$password}", 'botId' => $botId]);
+    } else {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'error' => 'Invalid password']);
+    }
+    exit;
+}
+
+if ($route !== '/admin/login' && $route !== '/admin/signup') {
+    if (empty($botIdHeader) || empty($providedPass) || strpos($providedPass, ':') === false) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Unauthorized: Missing credentials headers or invalid token format']);
+        exit;
+    }
+    
+    list($adminUser, $adminPass) = explode(':', $providedPass, 2);
+    
+    $stmt = $pdo->prepare("SELECT password FROM admin_users WHERE username = :username AND bot_id = :bot_id");
+    $stmt->execute(['username' => $adminUser, 'bot_id' => $botIdHeader]);
+    
+    if (!$row || $adminPass !== $row['password']) {
         http_response_code(401);
         echo json_encode(['error' => 'Unauthorized: Invalid credentials']);
         exit;
@@ -541,8 +580,13 @@ if ($route === '/admin/settings') {
                 exit;
             }
 
-            $stmt = $pdo->prepare('INSERT INTO settings (setting_key, bot_id, setting_value) VALUES (:key, :bot_id, :value) ON DUPLICATE KEY UPDATE setting_value = :value_update');
-            $stmt->execute(['key' => $key, 'bot_id' => $botIdHeader, 'value' => $value, 'value_update' => $value]);
+            if ($key === 'admin_password') {
+                $stmt = $pdo->prepare('UPDATE admin_users SET password = :password WHERE username = :username AND bot_id = :bot_id');
+                $stmt->execute(['password' => $value, 'username' => $adminUser, 'bot_id' => $botIdHeader]);
+            } else {
+                $stmt = $pdo->prepare('INSERT INTO settings (setting_key, bot_id, setting_value) VALUES (:key, :bot_id, :value) ON DUPLICATE KEY UPDATE setting_value = :value_update');
+                $stmt->execute(['key' => $key, 'bot_id' => $botIdHeader, 'value' => $value, 'value_update' => $value]);
+            }
 
             echo json_encode(['success' => true]);
         } catch (Exception $e) {
