@@ -111,7 +111,11 @@ const isProduction = process.env.NODE_ENV === 'production';
 const PORT = process.env.PORT || (isProduction ? 3001 : 3002);
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-bot-token', 'x-bot-id']
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
