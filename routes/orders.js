@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import pool from '../config/database.js';
-import { getTelegramUserId } from '../lib/auth.js';
+import { getBotIdAndUser } from '../lib/auth.js';
 import { notifyNewOrder } from '../lib/notify.js';
 
 const router = Router();
@@ -10,7 +10,8 @@ router.post('/place', async (req, res) => {
     try {
         const { service, link, quantity, initData, answer_number, comments } = req.body;
         
-        const tgId = getTelegramUserId(initData);
+        const { botId, user: tgUser } = getBotIdAndUser(initData);
+        const tgId = tgUser?.id ? String(tgUser.id) : null;
         if (!tgId) {
             return res.status(401).json({ success: false, error: 'User not authenticated' });
         }
@@ -23,11 +24,11 @@ router.post('/place', async (req, res) => {
             await conn.beginTransaction();
             
             // 1. Get rate multiplier
-            const [settingsRows] = await conn.execute('SELECT setting_value FROM settings WHERE setting_key = "rate_multiplier"');
+            const [settingsRows] = await conn.execute('SELECT setting_value FROM settings WHERE setting_key = "rate_multiplier" AND bot_id = ?', [botId]);
             const rateMultiplier = settingsRows.length > 0 ? parseFloat(settingsRows[0].setting_value) : 55.0;
 
             // 2. Lock user row to prevent race conditions
-            const [userRows] = await conn.execute('SELECT * FROM auth WHERE tg_id = ? FOR UPDATE', [tgId]);
+            const [userRows] = await conn.execute('SELECT * FROM auth WHERE tg_id = ? AND bot_id = ? FOR UPDATE', [tgId, botId]);
             const user = userRows[0];
             if (!user) {
                 await conn.rollback();
@@ -35,8 +36,6 @@ router.post('/place', async (req, res) => {
             }
 
             // 3. Fetch specific service from GodOfPanel
-            // Actually, we should fetch services, but since GOP API is slow and we don't know the rate of this single service easily,
-            // We can fetch from GOP: action=services
             const gopRes = await fetch(`https://godofpanel.com/api/v2?key=${apiKey}&action=services`);
             const allServices = await gopRes.json();
             const serviceData = allServices.find(s => parseInt(s.service) === parseInt(service));
@@ -81,26 +80,26 @@ router.post('/place', async (req, res) => {
             const providerOrderId = orderData.order;
 
             // 5. Update user balance
-            await conn.execute('UPDATE auth SET balance = balance - ?, last_order = NOW(), total_spent = total_spent + ? WHERE tg_id = ?', [totalCostEtb, totalCostEtb, tgId]);
+            await conn.execute('UPDATE auth SET balance = balance - ?, last_order = NOW(), total_spent = total_spent + ? WHERE tg_id = ? AND bot_id = ?', [totalCostEtb, totalCostEtb, tgId, botId]);
 
             // Get new balance
-            const [newBalRows] = await conn.execute('SELECT balance FROM auth WHERE tg_id = ?', [tgId]);
+            const [newBalRows] = await conn.execute('SELECT balance FROM auth WHERE tg_id = ? AND bot_id = ?', [tgId, botId]);
             const newBalanceStr = newBalRows[0].balance;
 
             // 6. Insert Order into DB
             const [insertRes] = await conn.execute(
                 `INSERT INTO orders 
-                 (user_id, service_id, target_link, quantity, provider_order_id, cost, status, created_at) 
-                 VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())`,
-                [tgId, service, link, quantity, providerOrderId, totalCostEtb]
+                 (user_id, bot_id, service_id, target_link, quantity, provider_order_id, cost, status, created_at) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+                [tgId, botId, service, link, quantity, providerOrderId, totalCostEtb]
             );
 
             // 7. Log Transaction
             await conn.execute(
                 `INSERT INTO transactions 
-                 (user_id, type, amount, balance_after, reference_type, reference_id, description)
-                 VALUES (?, 'order', ?, ?, 'order', ?, 'Placed Order #${insertRes.insertId}')`,
-                [tgId, -totalCostEtb, newBalanceStr, insertRes.insertId]
+                 (user_id, bot_id, type, amount, balance_after, reference_type, reference_id, description)
+                 VALUES (?, ?, 'order', ?, ?, 'order', ?, 'Placed Order #${insertRes.insertId}')`,
+                [tgId, botId, -totalCostEtb, newBalanceStr, insertRes.insertId]
             );
 
             await conn.commit();
@@ -132,13 +131,14 @@ router.post('/place', async (req, res) => {
 // getOrders
 router.post('/list', async (req, res) => {
     const { initData } = req.body;
-    const tgId = getTelegramUserId(initData);
+    const { botId, user: tgUser } = getBotIdAndUser(initData);
+    const tgId = tgUser?.id ? String(tgUser.id) : null;
     if (!tgId) return res.status(401).json({ error: 'Not authenticated' });
 
     try {
         const [rows] = await pool.execute(
-            'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 100',
-            [tgId]
+            'SELECT * FROM orders WHERE user_id = ? AND bot_id = ? ORDER BY created_at DESC LIMIT 100',
+            [tgId, botId]
         );
         const formattedRows = rows.map(o => {
             const val = o.cost !== undefined && o.cost !== null ? parseFloat(o.cost) : (o.charge !== undefined && o.charge !== null ? parseFloat(o.charge) : 0);
@@ -158,14 +158,15 @@ router.post('/list', async (req, res) => {
 // checkOrderStatus
 router.post('/status', async (req, res) => {
     const { initData } = req.body;
-    const tgId = getTelegramUserId(initData);
+    const { botId, user: tgUser } = getBotIdAndUser(initData);
+    const tgId = tgUser?.id ? String(tgUser.id) : null;
     if (!tgId) return res.status(401).json({ error: 'Not authenticated' });
 
     try {
         // Find pending/in_progress orders for this user
         const [orders] = await pool.execute(
-            "SELECT id, provider_order_id FROM orders WHERE user_id = ? AND status IN ('pending', 'in_progress', 'processing')",
-            [tgId]
+            "SELECT id, provider_order_id FROM orders WHERE user_id = ? AND bot_id = ? AND status IN ('pending', 'in_progress', 'processing')",
+            [tgId, botId]
         );
 
         if (orders.length === 0) return res.json({ success: true, updated: [] });
@@ -181,8 +182,8 @@ router.post('/status', async (req, res) => {
             const providerStatus = statusMap[order.provider_order_id];
             if (providerStatus && providerStatus.status) {
                 const newStatus = providerStatus.status.toLowerCase();
-                await pool.execute('UPDATE orders SET status = ?, start_count = ?, remains = ? WHERE id = ?', 
-                    [newStatus, providerStatus.start_count || 0, providerStatus.remains || 0, order.id]);
+                await pool.execute('UPDATE orders SET status = ?, start_count = ?, remains = ? WHERE id = ? AND bot_id = ?', 
+                    [newStatus, providerStatus.start_count || 0, providerStatus.remains || 0, order.id, botId]);
                 updated.push({ id: order.id, status: newStatus });
             }
         }
@@ -197,12 +198,13 @@ router.post('/status', async (req, res) => {
 // requestRefill
 router.post('/refill', async (req, res) => {
     const { initData, order_id } = req.body;
-    const tgId = getTelegramUserId(initData);
+    const { botId, user: tgUser } = getBotIdAndUser(initData);
+    const tgId = tgUser?.id ? String(tgUser.id) : null;
     if (!tgId) return res.status(401).json({ error: 'Not authenticated' });
 
     try {
         // Find provider order ID
-        const [orders] = await pool.execute('SELECT provider_order_id FROM orders WHERE id = ? AND user_id = ?', [order_id, tgId]);
+        const [orders] = await pool.execute('SELECT provider_order_id FROM orders WHERE id = ? AND user_id = ? AND bot_id = ?', [order_id, tgId, botId]);
         if (!orders[0]) return res.json({ success: false, message: 'Order not found' });
 
         const apiKey = process.env.GODOFPANEL_API_KEY;

@@ -18,6 +18,8 @@
  */
 import { Router } from 'express';
 import pool from '../config/database.js';
+import { getBotIdAndUser } from '../lib/auth.js';
+import Chapa from '../lib/chapa.js';
 import { notifyDeposit } from '../lib/notify.js';
 
 const router = Router();
@@ -30,7 +32,8 @@ router.post('/', async (req, res) => {
         const amount = parseFloat(rawAmount) || 0;
 
         // ─── Authenticate user ───────────────────────────────
-        const tgId = getTelegramUserId(initData);
+        const { botId, user: tgUser } = getBotIdAndUser(initData);
+        const tgId = tgUser?.id ? String(tgUser.id) : null;
         if (!tgId) {
             conn.release();
             return res.json({ success: false, error: 'User not authenticated' });
@@ -46,8 +49,8 @@ router.post('/', async (req, res) => {
 
         // Lock the deposit row
         const [deposits] = await conn.execute(
-            'SELECT * FROM deposits WHERE tx_ref = ? FOR UPDATE',
-            [txRef]
+            'SELECT * FROM deposits WHERE tx_ref = ? AND bot_id = ? FOR UPDATE',
+            [txRef, botId]
         );
         let deposit = deposits[0];
 
@@ -55,13 +58,13 @@ router.post('/', async (req, res) => {
         if (!deposit) {
             if (amount > 0) {
                 await conn.execute(
-                    "INSERT INTO deposits (user_id, amount, tx_ref, status) VALUES (?, ?, ?, 'pending')",
-                    [tgId, amount, txRef]
+                    "INSERT INTO deposits (user_id, bot_id, amount, tx_ref, status) VALUES (?, ?, ?, ?, 'pending')",
+                    [tgId, botId, amount, txRef]
                 );
 
                 const [newDeposits] = await conn.execute(
-                    'SELECT * FROM deposits WHERE tx_ref = ? FOR UPDATE',
-                    [txRef]
+                    'SELECT * FROM deposits WHERE tx_ref = ? AND bot_id = ? FOR UPDATE',
+                    [txRef, botId]
                 );
                 deposit = newDeposits[0];
             } else {
@@ -76,8 +79,8 @@ router.post('/', async (req, res) => {
             await conn.commit();
 
             const [balRows] = await conn.execute(
-                'SELECT balance FROM auth WHERE tg_id = ?',
-                [deposit.user_id]
+                'SELECT balance FROM auth WHERE tg_id = ? AND bot_id = ?',
+                [deposit.user_id, botId]
             );
             const balance = parseFloat(balRows[0]?.balance) || 0;
 
@@ -103,28 +106,28 @@ router.post('/', async (req, res) => {
 
             // Update deposit status
             await conn.execute(
-                "UPDATE deposits SET status = 'success', chapa_tx_ref = ?, chapa_response = ?, completed_at = NOW() WHERE id = ?",
-                [verifiedChapaRef, responseJson, deposit.id]
+                "UPDATE deposits SET status = 'success', chapa_tx_ref = ?, chapa_response = ?, completed_at = NOW() WHERE id = ? AND bot_id = ?",
+                [verifiedChapaRef, responseJson, deposit.id, botId]
             );
 
             // Credit user balance
             await conn.execute(
-                'UPDATE auth SET balance = balance + ?, last_deposit = NOW() WHERE tg_id = ?',
-                [verifiedAmount, deposit.user_id]
+                'UPDATE auth SET balance = balance + ?, last_deposit = NOW() WHERE tg_id = ? AND bot_id = ?',
+                [verifiedAmount, deposit.user_id, botId]
             );
 
             // Get new balance
             const [balRows] = await conn.execute(
-                'SELECT balance FROM auth WHERE tg_id = ?',
-                [deposit.user_id]
+                'SELECT balance FROM auth WHERE tg_id = ? AND bot_id = ?',
+                [deposit.user_id, botId]
             );
             const newBalance = parseFloat(balRows[0]?.balance) || 0;
 
             // Record transaction in ledger
             await conn.execute(
-                `INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, reference_id, description)
-                 VALUES (?, 'deposit', ?, ?, 'deposit', ?, 'Chapa deposit')`,
-                [deposit.user_id, verifiedAmount, newBalance, deposit.id]
+                `INSERT INTO transactions (user_id, bot_id, type, amount, balance_after, reference_type, reference_id, description)
+                 VALUES (?, ?, 'deposit', ?, ?, 'deposit', ?, 'Chapa deposit')`,
+                [deposit.user_id, botId, verifiedAmount, newBalance, deposit.id]
             );
 
             await conn.commit();

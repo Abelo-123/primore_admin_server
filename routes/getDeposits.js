@@ -13,7 +13,7 @@
  */
 import { Router } from 'express';
 import pool from '../config/database.js';
-import { getTelegramUserId } from '../lib/auth.js';
+import { getBotIdAndUser } from '../lib/auth.js';
 
 const router = Router();
 
@@ -26,7 +26,8 @@ async function handleGetDeposits(req, res) {
         if (limit > 50) limit = 50; // Cap at 50
 
         // Authenticate user
-        const tgId = getTelegramUserId(initData);
+        const { botId, user: tgUser } = getBotIdAndUser(initData);
+        const tgId = tgUser?.id ? String(tgUser.id) : null;
         if (!tgId) {
             return res.status(401).json({ success: false, error: 'User not authenticated' });
         }
@@ -34,10 +35,10 @@ async function handleGetDeposits(req, res) {
         const [deposits] = await pool.execute(
             `SELECT id, amount, tx_ref as reference_id, status, 'Chapa' as method, created_at, completed_at
              FROM deposits
-             WHERE user_id = ?
+             WHERE user_id = ? AND bot_id = ?
              ORDER BY created_at DESC
              LIMIT ?`,
-            [tgId, limit]
+            [tgId, botId, limit]
         );
 
         return res.json(deposits);

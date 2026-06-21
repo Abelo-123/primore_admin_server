@@ -33,6 +33,7 @@ pool.getConnection()
                 CREATE TABLE chat_messages (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     user_id VARCHAR(50) NOT NULL,
+                    bot_id VARCHAR(50) DEFAULT NULL,
                     message TEXT NOT NULL,
                     is_admin TINYINT(1) DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

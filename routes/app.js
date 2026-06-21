@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import pool from '../config/database.js';
-import { getTelegramUserId, getTelegramUser } from '../lib/auth.js';
+import { getBotIdAndUser } from '../lib/auth.js';
 import { notifyNewUser } from '../lib/notify.js';
 
 const router = Router();
@@ -8,7 +8,23 @@ const router = Router();
 // get_settings
 router.get('/settings', async (req, res) => {
     try {
-        const [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings');
+        const initData = req.query.initData || '';
+        const { botId } = getBotIdAndUser(initData);
+        let [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings WHERE bot_id = ?', [botId]);
+        
+        if (rows.length === 0) {
+            // Seed settings by copying settings from another bot if any exist
+            const [anySettings] = await pool.execute('SELECT DISTINCT bot_id FROM settings LIMIT 1');
+            if (anySettings.length > 0) {
+                const sourceBotId = anySettings[0].bot_id;
+                const [sourceRows] = await pool.execute('SELECT setting_key, setting_value FROM settings WHERE bot_id = ?', [sourceBotId]);
+                for (const s of sourceRows) {
+                    await pool.execute('INSERT IGNORE INTO settings (setting_key, bot_id, setting_value) VALUES (?, ?, ?)', [s.setting_key, botId, s.setting_value]);
+                }
+                [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings WHERE bot_id = ?', [botId]);
+            }
+        }
+
         const settings = {
             rateMultiplier: 55,
             discountPercent: 0,
@@ -43,8 +59,11 @@ router.get('/settings', async (req, res) => {
 // get_recommended - now uses top_services_ids from settings
 router.get('/recommended', async (req, res) => {
     try {
+        const initData = req.query.initData || '';
+        const { botId } = getBotIdAndUser(initData);
         const [rows] = await pool.execute(
-            'SELECT setting_value FROM settings WHERE setting_key = "top_services_ids"'
+            'SELECT setting_value FROM settings WHERE setting_key = "top_services_ids" AND bot_id = ?',
+            [botId]
         );
         if (rows.length > 0 && rows[0].setting_value) {
             const ids = rows[0].setting_value
@@ -63,11 +82,12 @@ router.get('/recommended', async (req, res) => {
 // get alerts
 router.post('/alerts', async (req, res) => {
     const { initData } = req.body;
-    const tgId = getTelegramUserId(initData);
+    const { botId, user } = getBotIdAndUser(initData);
+    const tgId = user?.id ? String(user.id) : null;
     if (!tgId) return res.json({ success: false, unreadCount: 0, alerts: [] });
 
     try {
-        const [alerts] = await pool.execute('SELECT * FROM alerts WHERE user_id = ? ORDER BY created_at DESC LIMIT 50', [tgId]);
+        const [alerts] = await pool.execute('SELECT * FROM alerts WHERE user_id = ? AND bot_id = ? ORDER BY created_at DESC LIMIT 50', [tgId, botId]);
         const unreadCount = alerts.filter(a => a.is_read === 0 || a.is_read === false).length;
         return res.json({ success: true, unreadCount, alerts });
     } catch (err) {
@@ -79,11 +99,12 @@ router.post('/alerts', async (req, res) => {
 // mark alerts read
 router.post('/alerts/mark-read', async (req, res) => {
     const { initData } = req.body;
-    const tgId = getTelegramUserId(initData);
+    const { botId, user } = getBotIdAndUser(initData);
+    const tgId = user?.id ? String(user.id) : null;
     if (!tgId) return res.json({ success: false });
 
     try {
-        await pool.execute('UPDATE alerts SET is_read = 1 WHERE user_id = ?', [tgId]);
+        await pool.execute('UPDATE alerts SET is_read = 1 WHERE user_id = ? AND bot_id = ?', [tgId, botId]);
         return res.json({ success: true });
     } catch (err) {
         console.error(err);
@@ -94,7 +115,7 @@ router.post('/alerts/mark-read', async (req, res) => {
 // auth (for telegram_auth.php)
 router.post('/auth', async (req, res) => {
     const { initData } = req.body;
-    const tgUser = getTelegramUser(initData);
+    const { botId, user: tgUser } = getBotIdAndUser(initData);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
     
     if (!tgId) return res.status(401).json({ success: false });
@@ -105,20 +126,20 @@ router.post('/auth', async (req, res) => {
     const photoUrl = tgUser.photo_url || '';
 
     try {
-        let [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ?', [tgId]);
+        let [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ? AND bot_id = ?', [tgId, botId]);
         if (users.length === 0) {
             await pool.execute(
-                "INSERT INTO auth (tg_id, username, first_name, last_name, photo_url, balance, auth_provider, last_login) VALUES (?, ?, ?, ?, ?, 0.00, 'telegram', NOW())", 
-                [tgId, username, firstName, lastName, photoUrl]
+                "INSERT INTO auth (tg_id, bot_id, username, first_name, last_name, photo_url, balance, auth_provider, last_login) VALUES (?, ?, ?, ?, ?, ?, 0.00, 'telegram', NOW())", 
+                [tgId, botId, username, firstName, lastName, photoUrl]
             );
-            [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ?', [tgId]);
+            [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ? AND bot_id = ?', [tgId, botId]);
             
             // Notify new user registration
             notifyNewUser({ uid: tgId, uuid: username || firstName });
         } else {
             await pool.execute(
-                'UPDATE auth SET username = ?, first_name = ?, last_name = ?, photo_url = ?, last_login = NOW() WHERE tg_id = ?', 
-                [username, firstName, lastName, photoUrl, tgId]
+                'UPDATE auth SET username = ?, first_name = ?, last_name = ?, photo_url = ?, last_login = NOW() WHERE tg_id = ? AND bot_id = ?', 
+                [username, firstName, lastName, photoUrl, tgId, botId]
             );
         }
         const user = users[0];
