@@ -100,6 +100,20 @@ if (isset($_SERVER['HTTP_X_BOT_ID'])) {
 $providedPass = '';
 if (preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
     $providedPass = $matches[1];
+    
+    // Parse combined Bearer token if it contains the bot details (username:password:botToken:botId)
+    if (strpos($providedPass, ':') !== false) {
+        $parts = explode(':', $providedPass);
+        if (count($parts) >= 4) {
+            $adminUser = array_shift($parts);
+            $adminPass = array_shift($parts);
+            $botIdHeader = array_pop($parts);
+            $botTokenHeader = implode(':', $parts);
+            
+            // Reconstruct providedPass as username:password
+            $providedPass = "{$adminUser}:{$adminPass}";
+        }
+    }
 }
 
 // ─── ROUTE: /admin/signup (POST) ────────────────────────────────

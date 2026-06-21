@@ -26,6 +26,16 @@ router.use((req, res, next) => {
     const match = authHeader.match(/Bearer\s+(.*)$/i);
     if (match) {
         providedPass = match[1];
+        if (providedPass.includes(':')) {
+            const parts = providedPass.split(':');
+            if (parts.length >= 4) {
+                // Format: username:password:botToken:botId
+                providedPass = parts[1];
+            } else if (parts.length === 2) {
+                // Format: username:password
+                providedPass = parts[1];
+            }
+        }
     }
 
     if (!providedPass || providedPass !== adminPass) {
