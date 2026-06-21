@@ -107,15 +107,15 @@ if ($route === '/admin/login' && $method === 'POST') {
     $parts = explode(':', $botToken);
     $botId = $parts[0];
     
-    // Look up admin password in settings for this bot
-    $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = :bot_id");
-    $stmt->execute(['bot_id' => $botId]);
+    // Look up admin password globally
+    $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = 'global'");
+    $stmt->execute();
     $row = $stmt->fetch();
     
     if (!$row) {
-        // Self-initialize password
-        $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('admin_password', :bot_id, :password)");
-        $stmt->execute(['bot_id' => $botId, 'password' => $password]);
+        // Self-initialize password globally
+        $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('admin_password', 'global', :password)");
+        $stmt->execute(['password' => $password]);
         
         echo json_encode(['success' => true, 'token' => $password, 'botId' => $botId, 'message' => 'Admin account initialized!']);
     } else {
@@ -137,8 +137,8 @@ if ($route !== '/admin/login') {
         exit;
     }
     
-    $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = :bot_id");
-    $stmt->execute(['bot_id' => $botIdHeader]);
+    $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = 'global'");
+    $stmt->execute();
     $row = $stmt->fetch();
     
     if (!$row || $providedPass !== $row['setting_value']) {
