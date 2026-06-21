@@ -544,7 +544,24 @@ if ($route === '/admin/deposits' && $method === 'GET') {
             ORDER BY d.created_at DESC LIMIT :limit OFFSET :offset
         ";
         $stmt = $pdo->prepare($dataQuery);
-        foreach ($params as $key =>// ─── ROUTE: /admin/settings (GET / POST) ─────────────────────────
+        foreach ($params as $key => $val) {
+            $stmt->bindValue(":{$key}", $val, PDO::PARAM_STR);
+        }
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $deposits = array_map('formatDepositRow', $stmt->fetchAll());
+
+        echo json_encode(['deposits' => $deposits, 'total' => $total]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Failed to load deposits', 'details' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// ─── ROUTE: /admin/settings (GET / POST) ─────────────────────────
 if ($route === '/admin/settings') {
     if ($method === 'GET') {
         try {
