@@ -432,8 +432,8 @@ if ($route === '/admin/alerts' && $method === 'POST') {
         }
 
         if ($target === 'all') {
-            $stmt = $pdo->prepare('INSERT INTO alerts (user_id, title, message, type, bot_id) SELECT tg_id, :title, :message, :type, :bot_id FROM auth WHERE bot_id = :bot_id');
-            $stmt->execute(['title' => $title, 'message' => $message, 'type' => $type, 'bot_id' => $botIdHeader]);
+            $stmt = $pdo->prepare('INSERT INTO alerts (user_id, title, message, type, bot_id) SELECT tg_id, :title, :message, :type, :bot_id_val FROM auth WHERE bot_id = :bot_id_select');
+            $stmt->execute(['title' => $title, 'message' => $message, 'type' => $type, 'bot_id_val' => $botIdHeader, 'bot_id_select' => $botIdHeader]);
         } else {
             $stmt = $pdo->prepare('INSERT INTO alerts (user_id, title, message, type, bot_id) VALUES (:target, :title, :message, :type, :bot_id)');
             $stmt->execute(['target' => $target, 'title' => $title, 'message' => $message, 'type' => $type, 'bot_id' => $botIdHeader]);
@@ -456,8 +456,11 @@ if ($route === '/admin/orders' && $method === 'GET') {
         $status = isset($requestData['status']) ? $requestData['status'] : '';
         $offset = ($page - 1) * $limit;
 
-        $whereClause = 'WHERE o.bot_id = :bot_id';
-        $params = ['bot_id' => $botIdHeader];
+        $whereClause = 'WHERE o.bot_id = :bot_id_order';
+        $params = [
+            'bot_id_order' => $botIdHeader,
+            'bot_id_auth' => $botIdHeader
+        ];
 
         if (!empty($search)) {
             $whereClause .= ' AND (o.user_id LIKE :s1 OR a.username LIKE :s2 OR a.first_name LIKE :s3 OR o.target_link LIKE :s4)';
@@ -473,7 +476,7 @@ if ($route === '/admin/orders' && $method === 'GET') {
         }
 
         // Total
-        $countQuery = "SELECT COUNT(*) as total FROM orders o LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = :bot_id {$whereClause}";
+        $countQuery = "SELECT COUNT(*) as total FROM orders o LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = :bot_id_auth {$whereClause}";
         $stmt = $pdo->prepare($countQuery);
         $stmt->execute($params);
         $total = (int)$stmt->fetch()['total'];
@@ -482,7 +485,7 @@ if ($route === '/admin/orders' && $method === 'GET') {
         $dataQuery = "
             SELECT o.*, a.username, a.first_name 
             FROM orders o 
-            LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = :bot_id
+            LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = :bot_id_auth
             {$whereClause} 
             ORDER BY o.created_at DESC LIMIT :limit OFFSET :offset
         ";
@@ -513,8 +516,11 @@ if ($route === '/admin/deposits' && $method === 'GET') {
         $status = isset($requestData['status']) ? $requestData['status'] : '';
         $offset = ($page - 1) * $limit;
 
-        $whereClause = 'WHERE d.bot_id = :bot_id';
-        $params = ['bot_id' => $botIdHeader];
+        $whereClause = 'WHERE d.bot_id = :bot_id_deposit';
+        $params = [
+            'bot_id_deposit' => $botIdHeader,
+            'bot_id_auth' => $botIdHeader
+        ];
 
         if (!empty($search)) {
             $whereClause .= ' AND (d.user_id LIKE :s1 OR a.username LIKE :s2 OR a.first_name LIKE :s3 OR d.tx_ref LIKE :s4)';
@@ -530,7 +536,7 @@ if ($route === '/admin/deposits' && $method === 'GET') {
         }
 
         // Total
-        $countQuery = "SELECT COUNT(*) as total FROM deposits d LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = :bot_id {$whereClause}";
+        $countQuery = "SELECT COUNT(*) as total FROM deposits d LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = :bot_id_auth {$whereClause}";
         $stmt = $pdo->prepare($countQuery);
         $stmt->execute($params);
         $total = (int)$stmt->fetch()['total'];
@@ -539,7 +545,7 @@ if ($route === '/admin/deposits' && $method === 'GET') {
         $dataQuery = "
             SELECT d.*, a.username, a.first_name 
             FROM deposits d 
-            LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = :bot_id
+            LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = :bot_id_auth
             {$whereClause} 
             ORDER BY d.created_at DESC LIMIT :limit OFFSET :offset
         ";
@@ -1316,13 +1322,17 @@ if ($route === '/admin/broadcasts' && $method === 'GET') {
     try {
         $stmt = $pdo->prepare("
             SELECT b.*, 
-                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'sent' AND bm.bot_id = :bot_id) as sent_count,
-                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'failed' AND bm.bot_id = :bot_id) as failed_count
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'sent' AND bm.bot_id = :bot_id_sent) as sent_count,
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'failed' AND bm.bot_id = :bot_id_failed) as failed_count
             FROM broadcasts b
-            WHERE b.bot_id = :bot_id
+            WHERE b.bot_id = :bot_id_main
             ORDER BY b.created_at DESC
         ");
-        $stmt->execute(['bot_id' => $botIdHeader]);
+        $stmt->execute([
+            'bot_id_sent' => $botIdHeader,
+            'bot_id_failed' => $botIdHeader,
+            'bot_id_main' => $botIdHeader
+        ]);
         $rows = $stmt->fetchAll();
         foreach ($rows as &$r) {
             $r['id'] = (int)$r['id'];
@@ -1536,11 +1546,11 @@ if (strpos($route, '/admin/broadcasts/') === 0 && strpos($route, '/messages') !=
             $stmt = $pdo->prepare('
                 SELECT bm.*, a.first_name, a.username 
                 FROM broadcast_messages bm 
-                LEFT JOIN auth a ON bm.tg_id = a.tg_id AND a.bot_id = :bot_id
-                WHERE bm.broadcast_id = :id AND bm.bot_id = :bot_id
+                LEFT JOIN auth a ON bm.tg_id = a.tg_id AND a.bot_id = :bot_id_auth
+                WHERE bm.broadcast_id = :id AND bm.bot_id = :bot_id_bm
                 ORDER BY bm.created_at ASC
             ');
-            $stmt->execute(['id' => $broadcastId, 'bot_id' => $botIdHeader]);
+            $stmt->execute(['id' => $broadcastId, 'bot_id_auth' => $botIdHeader, 'bot_id_bm' => $botIdHeader]);
             $rows = $stmt->fetchAll();
             foreach ($rows as &$r) {
                 $r['id'] = (int)$r['id'];
