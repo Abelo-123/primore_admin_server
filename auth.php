@@ -29,6 +29,7 @@ function getTelegramUser($initData) {
         }
 
         unset($params['hash']);
+        unset($params['signature']);
         
         // Sort parameters alphabetically
         ksort($params);

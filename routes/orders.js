@@ -5,6 +5,23 @@ import { notifyNewOrder } from '../lib/notify.js';
 
 const router = Router();
 
+// ─── SSE client registry ─────────────────────────────────────────────────────
+// Map of tgId → Set of SSE response objects
+const sseClients = new Map();
+
+/**
+ * Push an SSE event to all connected clients for a given tgId.
+ * Called from this router after order placement / status update.
+ */
+export function notifyOrderEvent(tgId, payload) {
+    const clients = sseClients.get(String(tgId));
+    if (!clients || clients.size === 0) return;
+    const data = `data: ${JSON.stringify(payload)}\n\n`;
+    for (const res of clients) {
+        try { res.write(data); } catch (_) { /* client disconnected */ }
+    }
+}
+
 // placeOrder: POST /api/orders/place
 router.post('/place', async (req, res) => {
     try {
@@ -218,4 +235,53 @@ router.post('/refill', async (req, res) => {
     }
 });
 
+// SSE stream: GET /api/orders/stream?initData=...
+router.get('/stream', (req, res) => {
+    const rawInitData = req.query.initData;
+    const { botId, user: tgUser } = getBotIdAndUser(rawInitData);
+    const tgId = tgUser?.id ? String(tgUser.id) : null;
+
+    if (!tgId) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+    res.flushHeaders();
+
+    // Register client
+    if (!sseClients.has(tgId)) sseClients.set(tgId, new Set());
+    sseClients.get(tgId).add(res);
+
+    // Send an initial connected event
+    res.write(`data: ${JSON.stringify({ type: 'CONNECTED' })}\n\n`);
+
+    // Heartbeat every 25s to keep connection alive through proxies
+    const heartbeat = setInterval(() => {
+        try { res.write(': ping\n\n'); } catch (_) { clearInterval(heartbeat); }
+    }, 25000);
+
+    // Auto-reconnect hint after 55s (before Render's 60s idle timeout)
+    const reconnectHint = setTimeout(() => {
+        try {
+            res.write(`data: ${JSON.stringify({ type: 'RECONNECT' })}\n\n`);
+        } catch (_) {}
+    }, 55000);
+
+    // Cleanup on disconnect
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        clearTimeout(reconnectHint);
+        const clients = sseClients.get(tgId);
+        if (clients) {
+            clients.delete(res);
+            if (clients.size === 0) sseClients.delete(tgId);
+        }
+    });
+});
+
 export default router;
+

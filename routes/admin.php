@@ -64,117 +64,55 @@ try {
     // Fail silently
 }
 
+global $adminPassword, $adminBotId;
+
 $method = $_SERVER['REQUEST_METHOD'];
 
-// Check auth
+// ─── Read Authorization header ────────────────────────────────────
 $authHeader = '';
-$botTokenHeader = '';
-$botIdHeader = '';
-
 if (isset($_SERVER['HTTP_AUTHORIZATION'])) {
     $authHeader = $_SERVER['HTTP_AUTHORIZATION'];
 } elseif (isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
     $authHeader = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
 } elseif (function_exists('apache_request_headers')) {
-    $headers = apache_request_headers();
-    if (isset($headers['Authorization'])) $authHeader = $headers['Authorization'];
-    elseif (isset($headers['authorization'])) $authHeader = $headers['authorization'];
-}
-
-if (isset($_SERVER['HTTP_X_BOT_TOKEN'])) {
-    $botTokenHeader = $_SERVER['HTTP_X_BOT_TOKEN'];
-} elseif (function_exists('apache_request_headers')) {
-    $headers = apache_request_headers();
-    if (isset($headers['X-Bot-Token'])) $botTokenHeader = $headers['X-Bot-Token'];
-    elseif (isset($headers['x-bot-token'])) $botTokenHeader = $headers['x-bot-token'];
-}
-
-if (isset($_SERVER['HTTP_X_BOT_ID'])) {
-    $botIdHeader = $_SERVER['HTTP_X_BOT_ID'];
-} elseif (function_exists('apache_request_headers')) {
-    $headers = apache_request_headers();
-    if (isset($headers['X-Bot-Id'])) $botIdHeader = $headers['X-Bot-Id'];
-    elseif (isset($headers['x-bot-id'])) $botIdHeader = $headers['x-bot-id'];
+    $reqHeaders = apache_request_headers();
+    if (isset($reqHeaders['Authorization'])) $authHeader = $reqHeaders['Authorization'];
+    elseif (isset($reqHeaders['authorization'])) $authHeader = $reqHeaders['authorization'];
 }
 
 $providedPass = '';
 if (preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
-    $providedPass = $matches[1];
-    
-    // Parse combined Bearer token if it contains the bot details (username:password:botToken:botId)
-    if (strpos($providedPass, ':') !== false) {
-        $parts = explode(':', $providedPass);
-        if (count($parts) >= 4) {
-            $adminUser = array_shift($parts);
-            $adminPass = array_shift($parts);
-            $botIdHeader = array_pop($parts);
-            $botTokenHeader = implode(':', $parts);
-            
-            // Reconstruct providedPass as username:password
-            $providedPass = "{$adminUser}:{$adminPass}";
-        }
-    }
+    $providedPass = trim($matches[1]);
 }
 
-// ─── ROUTE: /admin/signup (POST) ────────────────────────────────
-if ($route === '/admin/signup' && $method === 'POST') {
-    $botToken = isset($requestData['botToken']) ? trim($requestData['botToken']) : '';
-    $username = isset($requestData['username']) ? trim($requestData['username']) : '';
-    $password = isset($requestData['password']) ? trim($requestData['password']) : '';
-    
-    if (empty($botToken) || strpos($botToken, ':') === false || empty($username) || empty($password)) {
-        http_response_code(400);
-        echo json_encode(['success' => false, 'error' => 'Valid Bot Token, Username, and Password are required']);
-        exit;
-    }
-    
-    $parts = explode(':', $botToken);
-    $botId = $parts[0];
-    
+// ─── Helper: get effective admin password (DB override > env) ─────
+function getEffectiveAdminPassword() {
+    global $pdo, $adminPassword, $adminBotId;
     try {
-        $stmt = $pdo->prepare("INSERT INTO admin_users (username, password, bot_id) VALUES (:username, :password, :bot_id)");
-        $stmt->execute(['username' => $username, 'password' => $password, 'bot_id' => $botId]);
-        
-        echo json_encode(['success' => true, 'token' => "{$username}:{$password}", 'botId' => $botId]);
-    } catch (PDOException $e) {
-        if ($e->getCode() == 23000) {
-            http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'Username already exists for this bot']);
-        } else {
-            http_response_code(500);
-            echo json_encode(['success' => false, 'error' => 'Failed to create admin user', 'details' => $e->getMessage()]);
+        $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = :bot_id LIMIT 1");
+        $stmt->execute(['bot_id' => $adminBotId]);
+        $row = $stmt->fetch();
+        if ($row && !empty($row['setting_value'])) {
+            return $row['setting_value'];
         }
-    }
-    exit;
+    } catch (Exception $e) { /* fall through */ }
+    return $adminPassword; // env fallback
 }
 
 // ─── ROUTE: /admin/login (POST) ─────────────────────────────────
 if ($route === '/admin/login' && $method === 'POST') {
-    $botToken = isset($requestData['botToken']) ? trim($requestData['botToken']) : '';
-    $username = isset($requestData['username']) ? trim($requestData['username']) : '';
     $password = isset($requestData['password']) ? trim($requestData['password']) : '';
-    
-    if (empty($botToken) || strpos($botToken, ':') === false || empty($username) || empty($password)) {
+
+    if (empty($password)) {
         http_response_code(400);
-        echo json_encode(['success' => false, 'error' => 'Valid Bot Token, Username, and Password are required']);
+        echo json_encode(['success' => false, 'error' => 'Password is required']);
         exit;
     }
-    
-    $parts = explode(':', $botToken);
-    $botId = $parts[0];
-    
-    $stmt = $pdo->prepare("SELECT password FROM admin_users WHERE username = :username AND bot_id = :bot_id");
-    $stmt->execute(['username' => $username, 'bot_id' => $botId]);
-    $row = $stmt->fetch();
-    
-    if (!$row) {
-        http_response_code(401);
-        echo json_encode(['success' => false, 'error' => 'Admin account not found for this bot token. Please Sign Up first.']);
-        exit;
-    }
-    
-    if ($password === $row['password']) {
-        echo json_encode(['success' => true, 'token' => "{$username}:{$password}", 'botId' => $botId]);
+
+    $effective = getEffectiveAdminPassword();
+
+    if ($password === $effective) {
+        echo json_encode(['success' => true, 'token' => $password]);
     } else {
         http_response_code(401);
         echo json_encode(['success' => false, 'error' => 'Invalid password']);
@@ -182,37 +120,19 @@ if ($route === '/admin/login' && $method === 'POST') {
     exit;
 }
 
-// ─── ROUTE: /admin/debug-log (GET) ──────────────────────────────
-if ($route === '/admin/debug-log' && $method === 'GET') {
-    header('Content-Type: text/plain');
-    $logFile = __DIR__ . '/dashboard_error.log';
-    if (file_exists($logFile)) {
-        echo file_get_contents($logFile);
-    } else {
-        echo "No debug log file found at: " . $logFile;
+// ─── Auth guard for all other /admin/* routes ────────────────────
+if ($route !== '/admin/login') {
+    $effective = getEffectiveAdminPassword();
+    if (empty($providedPass) || $providedPass !== $effective) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Unauthorized: Invalid or missing password']);
+        exit;
     }
-    exit;
 }
 
-if ($route !== '/admin/login' && $route !== '/admin/signup') {
-    if (empty($botIdHeader) || empty($providedPass) || strpos($providedPass, ':') === false) {
-        http_response_code(401);
-        echo json_encode(['error' => 'Unauthorized: Missing credentials headers or invalid token format']);
-        exit;
-    }
-    
-    list($adminUser, $adminPass) = explode(':', $providedPass, 2);
-    
-    $stmt = $pdo->prepare("SELECT password FROM admin_users WHERE username = :username AND bot_id = :bot_id");
-    $stmt->execute(['username' => $adminUser, 'bot_id' => $botIdHeader]);
-    $row = $stmt->fetch();
-    
-    if (!$row || $adminPass !== $row['password']) {
-        http_response_code(401);
-        echo json_encode(['error' => 'Unauthorized: Invalid credentials']);
-        exit;
-    }
-}
+// The bot_id for scoping data comes from the server env (transparent to admin UI)
+$botIdHeader = $adminBotId;
+
 
 
 // Helper to sanitize database output types
@@ -246,6 +166,44 @@ function formatUserRow($row) {
     if (isset($row['balance'])) $row['balance'] = (float)$row['balance'];
     if (isset($row['total_spent'])) $row['total_spent'] = $row['total_spent'] !== null ? (float)$row['total_spent'] : null;
     return $row;
+}
+
+// ─── ROUTE: /admin/debug-log (GET) ──────────────────────────────
+if ($route === '/admin/debug-log' && $method === 'GET') {
+    header('Content-Type: text/plain');
+    $logFile = __DIR__ . '/dashboard_error.log';
+    if (file_exists($logFile)) {
+        echo file_get_contents($logFile);
+    } else {
+        echo "No debug log file found at: " . $logFile;
+    }
+    exit;
+}
+
+// ─── ROUTE: /admin/change-password (POST) ───────────────────────
+if ($route === '/admin/change-password' && $method === 'POST') {
+    $newPassword = isset($requestData['newPassword']) ? trim($requestData['newPassword']) : '';
+
+    if (empty($newPassword) || strlen($newPassword) < 6) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'New password must be at least 6 characters']);
+        exit;
+    }
+
+    try {
+        // Store new password in settings table scoped to this bot
+        $stmt = $pdo->prepare("
+            INSERT INTO settings (setting_key, bot_id, setting_value)
+            VALUES ('admin_password', :bot_id, :value)
+            ON DUPLICATE KEY UPDATE setting_value = :value_update
+        ");
+        $stmt->execute(['bot_id' => $adminBotId, 'value' => $newPassword, 'value_update' => $newPassword]);
+        echo json_encode(['success' => true]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Failed to save new password', 'details' => $e->getMessage()]);
+    }
+    exit;
 }
 
 // ─── ROUTE: /admin/dashboard (GET) ──────────────────────────────

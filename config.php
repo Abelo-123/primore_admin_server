@@ -79,6 +79,10 @@ try {
 // Global configurations
 $botToken = getEnvVar('BOT_TOKEN');
 $gopApiKey = getEnvVar('GODOFPANEL_API_KEY');
+
+// Admin auth globals
+$adminPassword = getEnvVar('ADMIN_PASSWORD', 'R34234'); // Default fallback password
+$adminBotId = $botToken ? explode(':', $botToken)[0] : '';
 $chapaSecretKey = getEnvVar('CHAPA_SECRET_KEY');
 if (!$chapaSecretKey || strpos($chapaSecretKey, 'tEs') !== false || strpos($chapaSecretKey, 'Mg2Kc') !== false) {
     $chapaSecretKey = 'CHASECK-WGUq6JVPIxSmjVSWTebh5UOOcshNscEd';
