@@ -77,7 +77,7 @@ try {
 }
 
 // Global configurations
-$botToken = getEnvVar('BOT_TOKEN');
+$botToken = getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
 $gopApiKey = getEnvVar('GODOFPANEL_API_KEY');
 
 // Admin auth globals
