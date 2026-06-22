@@ -1,6 +1,6 @@
 <?php
 /**
- * Telegram sdddignature validation utility
+ * Telegramdfgdf sdddignature validation utility
  */
 
 require_once __DIR__ . '/config.php';
