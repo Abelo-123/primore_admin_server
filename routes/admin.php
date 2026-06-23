@@ -1024,10 +1024,9 @@ if ($route === '/admin/finance-stats' && $method === 'GET') {
 
 // Helper to send Telegram message in PHP
 function sendTelegramMessagePHP($tgId, $message, $imageUrl) {
-    global $botTokenHeader;
-    $token = !empty($botTokenHeader) ? $botTokenHeader : getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
+    $token = getEnvVar('CLIENT_BOT_TOKEN');
     if (empty($token)) {
-        throw new Exception('BOT_TOKEN is not configured');
+        throw new Exception('CLIENT_BOT_TOKEN is not configured');
     }
 
     $replyMarkup = [
@@ -1187,10 +1186,9 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
 
 // Helper to send broadcast Telegram message (with custom button text/url support)
 function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlifyapp/') {
-    global $botTokenHeader;
-    $token = !empty($botTokenHeader) ? $botTokenHeader : getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
+    $token = getEnvVar('CLIENT_BOT_TOKEN');
     if (empty($token)) {
-        throw new Exception('BOT_TOKEN is not configured');
+        throw new Exception('CLIENT_BOT_TOKEN is not configured');
     }
 
     $replyMarkup = [
@@ -1242,10 +1240,9 @@ function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open Ap
 
 // Helper to edit Telegram message text/caption (with custom button text/url support)
 function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlifyapp/') {
-    global $botTokenHeader;
-    $token = !empty($botTokenHeader) ? $botTokenHeader : getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
+    $token = getEnvVar('CLIENT_BOT_TOKEN');
     if (empty($token)) {
-        throw new Exception('BOT_TOKEN is not configured');
+        throw new Exception('CLIENT_BOT_TOKEN is not configured');
     }
 
     $replyMarkup = [
@@ -1294,10 +1291,9 @@ function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null
 
 // Helper to delete Telegram message
 function deleteTelegramMessagePHP($tgId, $messageId) {
-    global $botTokenHeader;
-    $token = !empty($botTokenHeader) ? $botTokenHeader : getEnvVar('BOT_TOKEN', '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk');
+    $token = getEnvVar('CLIENT_BOT_TOKEN');
     if (empty($token)) {
-        throw new Exception('BOT_TOKEN is not configured');
+        throw new Exception('CLIENT_BOT_TOKEN is not configured');
     }
 
     $url = "https://api.telegram.org/bot{$token}/deleteMessage";
