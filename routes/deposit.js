@@ -108,6 +108,7 @@ router.post('/', async (req, res) => {
             first_name: user.first_name || 'User',
             last_name: user.last_name || '',
             tx_ref: generatedTxRef,
+            return_url: req.body.return_url,
         });
 
         if (result.success && result.data?.checkout_url) {

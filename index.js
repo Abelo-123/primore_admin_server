@@ -27,15 +27,16 @@ const app = express();
     try {
         const conn = await pool.getConnection();
         try {
-            // Ensure auth table has composite unique key (tg_id, bot_id) instead of just tg_id
+            // Ensure auth table has composite primary key (tg_id, bot_id) instead of just tg_id
             try {
-                await conn.execute('ALTER TABLE auth DROP INDEX tg_id');
-                console.log('[Startup] Dropped old UNIQUE KEY (tg_id) from auth table');
-            } catch (e) {}
-            try {
-                await conn.execute('ALTER TABLE auth ADD UNIQUE KEY tg_id_bot_id (tg_id, bot_id)');
-                console.log('[Startup] Added composite UNIQUE KEY (tg_id, bot_id) to auth table');
-            } catch (e) {}
+                try {
+                    await conn.execute('ALTER TABLE auth DROP INDEX tg_id_bot_id');
+                } catch (e) {}
+                await conn.execute('ALTER TABLE auth DROP PRIMARY KEY, ADD PRIMARY KEY (tg_id, bot_id)');
+                console.log('[Startup] Successfully updated PRIMARY KEY of auth table to compound (tg_id, bot_id)');
+            } catch (e) {
+                console.warn('[Startup] Note/Error updating primary key to compound:', e.message);
+            }
 
             // Ensure orders custom_fields exists
             try {
