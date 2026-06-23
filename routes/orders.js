@@ -107,7 +107,7 @@ router.post('/place', async (req, res) => {
             const [insertRes] = await conn.execute(
                 `INSERT INTO orders 
                  (user_id, bot_id, service_id, target_link, quantity, provider_order_id, cost, status, created_at) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
                 [tgId, botId, service, link, quantity, providerOrderId, totalCostEtb]
             );
 
