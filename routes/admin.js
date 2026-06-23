@@ -1,5 +1,5 @@
 /**
- * Admin Routes — Paxyo Admin Panel Backend
+ * Admin Routes — Paxyo Admin Panel Backend (Scoped by bot_id)
  *
  * Provides JWT-like token auth and CRUD endpoints for:
  * - Dashboard statistics
@@ -13,14 +13,34 @@ import pool from '../config/database.js';
 
 const router = Router();
 
+// Resolve the bot_id (defaulting to the one in the environment BOT_TOKEN)
+const botToken = process.env.BOT_TOKEN || '';
+const adminBotId = botToken ? botToken.split(':')[0] : '8731737556';
+
+// Helper to get effective admin password (DB override > env)
+async function getEffectiveAdminPassword() {
+    try {
+        const [rows] = await pool.execute(
+            "SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = ? LIMIT 1",
+            [adminBotId]
+        );
+        if (rows.length > 0 && rows[0].setting_value) {
+            return rows[0].setting_value;
+        }
+    } catch (e) {
+        console.error('[getEffectiveAdminPassword] DB error:', e.message);
+    }
+    return process.env.ADMIN_PASSWORD || 'paxyo2026';
+}
+
 // Middleware to check admin password auth
-router.use((req, res, next) => {
+router.use(async (req, res, next) => {
     if (req.path === '/login') {
         return next();
     }
 
     const authHeader = req.headers.authorization || '';
-    const adminPass = process.env.ADMIN_PASSWORD || 'paxyo2026';
+    const adminPass = await getEffectiveAdminPassword();
     
     let providedPass = '';
     const match = authHeader.match(/Bearer\s+(.*)$/i);
@@ -45,9 +65,9 @@ router.use((req, res, next) => {
 });
 
 // Login endpoint
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
     const { password } = req.body;
-    const adminPass = process.env.ADMIN_PASSWORD || 'paxyo2026';
+    const adminPass = await getEffectiveAdminPassword();
     if (password === adminPass) {
         return res.json({ success: true, token: adminPass });
     } else {
@@ -59,24 +79,26 @@ router.post('/login', (req, res) => {
 // ─── Dashboard ──────────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
     try {
-        const [[{ totalUsers }]] = await pool.execute('SELECT COUNT(*) as totalUsers FROM auth');
-        const [[{ totalOrders }]] = await pool.execute('SELECT COUNT(*) as totalOrders FROM orders');
-        const [[{ totalDeposits }]] = await pool.execute("SELECT COUNT(*) as totalDeposits FROM deposits WHERE status IN ('completed', 'success')");
-        const [[{ totalRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success')");
+        const [[{ totalUsers }]] = await pool.execute('SELECT COUNT(*) as totalUsers FROM auth WHERE bot_id = ?', [adminBotId]);
+        const [[{ totalOrders }]] = await pool.execute('SELECT COUNT(*) as totalOrders FROM orders WHERE bot_id = ?', [adminBotId]);
+        const [[{ totalDeposits }]] = await pool.execute("SELECT COUNT(*) as totalDeposits FROM deposits WHERE status IN ('completed', 'success') AND bot_id = ?", [adminBotId]);
+        const [[{ totalRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success') AND bot_id = ?", [adminBotId]);
 
         const [recentOrders] = await pool.execute(`
             SELECT o.*, a.username, a.first_name 
             FROM orders o 
-            LEFT JOIN auth a ON o.user_id = a.tg_id 
+            LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = o.bot_id
+            WHERE o.bot_id = ?
             ORDER BY o.created_at DESC LIMIT 10
-        `);
+        `, [adminBotId]);
 
         const [recentDeposits] = await pool.execute(`
             SELECT d.*, a.username, a.first_name 
             FROM deposits d 
-            LEFT JOIN auth a ON d.user_id = a.tg_id 
+            LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = d.bot_id
+            WHERE d.bot_id = ?
             ORDER BY d.created_at DESC LIMIT 10
-        `);
+        `, [adminBotId]);
 
         const formattedRecentOrders = recentOrders.map(o => {
             const val = o.cost !== undefined && o.cost !== null ? parseFloat(o.cost) : (o.charge !== undefined && o.charge !== null ? parseFloat(o.charge) : 0);
@@ -111,24 +133,19 @@ router.get('/users', async (req, res) => {
         const sortOrder = req.query.sortOrder || 'desc';
         const offset = (page - 1) * limit;
 
-        let whereClause = '';
-        let params = [];
-        const conditions = [];
+        let whereClause = 'WHERE bot_id = ?';
+        let params = [adminBotId];
 
         if (search) {
-            conditions.push('(tg_id LIKE ? OR username LIKE ? OR first_name LIKE ? OR last_name LIKE ?)');
+            whereClause += ' AND (tg_id LIKE ? OR username LIKE ? OR first_name LIKE ? OR last_name LIKE ?)';
             const s = `%${search}%`;
             params.push(s, s, s, s);
         }
 
         const username = req.query.username || '';
         if (username) {
-            conditions.push('username LIKE ?');
+            whereClause += ' AND username LIKE ?';
             params.push(`%${username}%`);
-        }
-
-        if (conditions.length > 0) {
-            whereClause = 'WHERE ' + conditions.join(' AND ');
         }
 
         const validSortColumns = {
@@ -165,15 +182,19 @@ router.post('/users/balance', async (req, res) => {
             return res.status(400).json({ error: 'tg_id and amount are required' });
         }
 
-        await pool.execute('UPDATE auth SET balance = balance + ? WHERE tg_id = ?', [amount, tg_id]);
-        const [[user]] = await pool.execute('SELECT balance FROM auth WHERE tg_id = ?', [tg_id]);
+        await pool.execute('UPDATE auth SET balance = balance + ? WHERE tg_id = ? AND bot_id = ?', [amount, tg_id, adminBotId]);
+        const [[user]] = await pool.execute('SELECT balance FROM auth WHERE tg_id = ? AND bot_id = ?', [tg_id, adminBotId]);
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found for this bot' });
+        }
 
         // Log the transaction
         const txType = amount >= 0 ? 'bonus' : 'refund';
         await pool.execute(
-            `INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, description, created_at)
-             VALUES (?, ?, ?, ?, 'admin', 'Admin balance adjustment', NOW())`,
-            [tg_id, txType, amount, user.balance]
+            `INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, description, bot_id, created_at)
+             VALUES (?, ?, ?, ?, 'admin', 'Admin balance adjustment', ?, NOW())`,
+            [tg_id, txType, amount, user.balance, adminBotId]
         );
 
         return res.json({ success: true, newBalance: parseFloat(user.balance) });
@@ -190,7 +211,7 @@ router.post('/users/role', async (req, res) => {
             return res.status(400).json({ error: 'tg_id and role are required' });
         }
 
-        await pool.execute('UPDATE auth SET role = ? WHERE tg_id = ?', [role, tg_id]);
+        await pool.execute('UPDATE auth SET role = ? WHERE tg_id = ? AND bot_id = ?', [role, tg_id, adminBotId]);
         return res.json({ success: true });
     } catch (err) {
         console.error('[admin/users/role]', err);
@@ -208,17 +229,17 @@ router.post('/alerts', async (req, res) => {
         }
 
         if (target === 'all') {
-            // Broadcast to every user
+            // Broadcast to every user of this bot
             await pool.execute(
-                `INSERT INTO alerts (user_id, title, message, type)
-                 SELECT tg_id, ?, ?, ? FROM auth`,
-                [title, message, type]
+                `INSERT INTO alerts (user_id, title, message, type, bot_id)
+                 SELECT tg_id, ?, ?, ?, ? FROM auth WHERE bot_id = ?`,
+                [title, message, type, adminBotId, adminBotId]
             );
         } else {
-            // Send to a specific user by tg_id
+            // Send to a specific user by tg_id for this bot
             await pool.execute(
-                'INSERT INTO alerts (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-                [target, title, message, type]
+                'INSERT INTO alerts (user_id, title, message, type, bot_id) VALUES (?, ?, ?, ?, ?)',
+                [target, title, message, type, adminBotId]
             );
         }
 
@@ -238,8 +259,8 @@ router.get('/orders', async (req, res) => {
         const status = req.query.status || '';
         const offset = (page - 1) * limit;
 
-        let whereClause = 'WHERE 1=1';
-        let params = [];
+        let whereClause = 'WHERE o.bot_id = ?';
+        let params = [adminBotId];
 
         if (search) {
             whereClause += ' AND (o.user_id LIKE ? OR a.username LIKE ? OR a.first_name LIKE ? OR o.target_link LIKE ?)';
@@ -253,13 +274,13 @@ router.get('/orders', async (req, res) => {
         }
 
         const [[{ total }]] = await pool.execute(
-            `SELECT COUNT(*) as total FROM orders o LEFT JOIN auth a ON o.user_id = a.tg_id ${whereClause}`, params
+            `SELECT COUNT(*) as total FROM orders o LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = o.bot_id ${whereClause}`, params
         );
 
         const [orders] = await pool.execute(
             `SELECT o.*, a.username, a.first_name 
              FROM orders o 
-             LEFT JOIN auth a ON o.user_id = a.tg_id 
+             LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = o.bot_id
              ${whereClause} 
              ORDER BY o.created_at DESC LIMIT ? OFFSET ?`,
             [...params, String(limit), String(offset)]
@@ -290,8 +311,8 @@ router.get('/deposits', async (req, res) => {
         const status = req.query.status || '';
         const offset = (page - 1) * limit;
 
-        let whereClause = 'WHERE 1=1';
-        let params = [];
+        let whereClause = 'WHERE d.bot_id = ?';
+        let params = [adminBotId];
 
         if (search) {
             whereClause += ' AND (d.user_id LIKE ? OR a.username LIKE ? OR a.first_name LIKE ? OR d.tx_ref LIKE ?)';
@@ -305,13 +326,13 @@ router.get('/deposits', async (req, res) => {
         }
 
         const [[{ total }]] = await pool.execute(
-            `SELECT COUNT(*) as total FROM deposits d LEFT JOIN auth a ON d.user_id = a.tg_id ${whereClause}`, params
+            `SELECT COUNT(*) as total FROM deposits d LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = d.bot_id ${whereClause}`, params
         );
 
         const [deposits] = await pool.execute(
             `SELECT d.*, a.username, a.first_name 
              FROM deposits d 
-             LEFT JOIN auth a ON d.user_id = a.tg_id 
+             LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = d.bot_id
              ${whereClause} 
              ORDER BY d.created_at DESC LIMIT ? OFFSET ?`,
             [...params, String(limit), String(offset)]
@@ -327,7 +348,7 @@ router.get('/deposits', async (req, res) => {
 // ─── Settings ───────────────────────────────────────────────────
 router.get('/settings', async (req, res) => {
     try {
-        const [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings');
+        const [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings WHERE bot_id = ?', [adminBotId]);
         const settings = {};
         rows.forEach(r => { settings[r.setting_key] = r.setting_value; });
 
@@ -353,8 +374,8 @@ router.post('/settings', async (req, res) => {
 
         // Upsert: INSERT ... ON DUPLICATE KEY UPDATE
         await pool.execute(
-            'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
-            [key, value, value]
+            'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
+            [key, adminBotId, value, value]
         );
 
         return res.json({ success: true });
@@ -367,7 +388,7 @@ router.post('/settings', async (req, res) => {
 // ─── Service Custom Pricing ────────────────────────────────────────
 router.get('/services/custom', async (req, res) => {
     try {
-        const [rows] = await pool.execute('SELECT * FROM service_custom ORDER BY updated_at DESC');
+        const [rows] = await pool.execute('SELECT * FROM service_custom WHERE bot_id = ? ORDER BY updated_at DESC', [adminBotId]);
         return res.json(rows);
     } catch (err) {
         console.error('[admin/services/custom]', err);
@@ -384,14 +405,14 @@ router.post('/services/custom', async (req, res) => {
         const desc = custom_description !== undefined ? custom_description : null;
 
         await pool.execute(
-            `INSERT INTO service_custom (service_id, custom_rate, profit_margin, is_enabled, custom_description) 
-             VALUES (?, ?, ?, ?, ?) 
+            `INSERT INTO service_custom (service_id, bot_id, custom_rate, profit_margin, is_enabled, custom_description) 
+             VALUES (?, ?, ?, ?, ?, ?) 
              ON DUPLICATE KEY UPDATE 
              custom_rate = COALESCE(?, custom_rate),
              profit_margin = COALESCE(?, profit_margin),
              is_enabled = COALESCE(?, is_enabled),
              custom_description = ?`,
-            [service_id, custom_rate, profit_margin, is_enabled, desc, custom_rate, profit_margin, is_enabled, desc]
+            [service_id, adminBotId, custom_rate, profit_margin, is_enabled, desc, custom_rate, profit_margin, is_enabled, desc]
         );
 
         return res.json({ success: true });
@@ -404,7 +425,7 @@ router.post('/services/custom', async (req, res) => {
 router.delete('/services/custom/:serviceId', async (req, res) => {
     try {
         const { serviceId } = req.params;
-        await pool.execute('DELETE FROM service_custom WHERE service_id = ?', [serviceId]);
+        await pool.execute('DELETE FROM service_custom WHERE service_id = ? AND bot_id = ?', [serviceId, adminBotId]);
         return res.json({ success: true });
     } catch (err) {
         console.error('[admin/services/custom]', err);
@@ -418,8 +439,10 @@ router.get('/services/activity', async (req, res) => {
         const [rows] = await pool.execute(
             `SELECT sc.*, a.username, a.first_name 
              FROM service_custom sc 
-             LEFT JOIN auth a ON sc.updated_by = a.tg_id
-             ORDER BY sc.updated_at DESC LIMIT 20`
+             LEFT JOIN auth a ON sc.updated_by = a.tg_id AND a.bot_id = sc.bot_id
+             WHERE sc.bot_id = ?
+             ORDER BY sc.updated_at DESC LIMIT 20`,
+            [adminBotId]
         );
         return res.json(rows);
     } catch (err) {
@@ -432,7 +455,8 @@ router.get('/services/activity', async (req, res) => {
 router.get('/services/disabled', async (req, res) => {
     try {
         const [rows] = await pool.execute(
-            'SELECT * FROM service_custom WHERE is_enabled = FALSE ORDER BY updated_at DESC'
+            'SELECT * FROM service_custom WHERE is_enabled = FALSE AND bot_id = ? ORDER BY updated_at DESC',
+            [adminBotId]
         );
         return res.json(rows);
     } catch (err) {
@@ -441,7 +465,7 @@ router.get('/services/disabled', async (req, res) => {
     }
 });
 
-    // ─── Support Chat ────────────────────────────────────────────────
+// ─── Support Chat ────────────────────────────────────────────────
 router.get('/chat/sessions', async (req, res) => {
     let conn;
     try {
@@ -449,10 +473,11 @@ router.get('/chat/sessions', async (req, res) => {
         const [sessions] = await conn.execute(`
             SELECT c.user_id, a.username, a.first_name, MAX(c.created_at) as last_message_at
             FROM chat_messages c
-            LEFT JOIN auth a ON c.user_id = a.tg_id
+            LEFT JOIN auth a ON c.user_id = a.tg_id AND a.bot_id = c.bot_id
+            WHERE c.bot_id = ?
             GROUP BY c.user_id, a.username, a.first_name
             ORDER BY last_message_at DESC
-        `);
+        `, [adminBotId]);
         return res.json(sessions);
     } catch (err) {
         console.error('[admin/chat/sessions] Error:', err.message);
@@ -466,8 +491,8 @@ router.get('/chat/:user_id', async (req, res) => {
     try {
         const { user_id } = req.params;
         const [messages] = await pool.execute(
-            'SELECT * FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC',
-            [user_id]
+            'SELECT * FROM chat_messages WHERE user_id = ? AND bot_id = ? ORDER BY created_at ASC',
+            [user_id, adminBotId]
         );
         return res.json(messages);
     } catch (err) {
@@ -483,13 +508,13 @@ router.post('/chat/:user_id', async (req, res) => {
         if (!message) return res.status(400).json({ error: 'message is required' });
 
         await pool.execute(
-            'INSERT INTO chat_messages (user_id, message, is_admin, created_at) VALUES (?, ?, 1, NOW())',
-            [user_id, message]
+            'INSERT INTO chat_messages (user_id, bot_id, message, is_admin, created_at) VALUES (?, ?, ?, 1, NOW())',
+            [user_id, adminBotId, message]
         );
 
         await pool.execute(
-            'INSERT INTO alerts (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-            [user_id, 'New Message', 'You have a new message from support', 'chat']
+            'INSERT INTO alerts (user_id, title, message, type, bot_id) VALUES (?, ?, ?, ?, ?)',
+            [user_id, 'New Message', 'You have a new message from support', 'chat', adminBotId]
         );
 
         return res.json({ success: true });
@@ -505,9 +530,10 @@ router.get('/withdrawals', async (req, res) => {
         const [rows] = await pool.execute(`
             SELECT w.*, a.username, a.first_name, a.last_name 
             FROM withdrawals w 
-            LEFT JOIN auth a ON w.user_id = a.tg_id 
+            LEFT JOIN auth a ON w.user_id = a.tg_id AND a.bot_id = w.bot_id
+            WHERE w.bot_id = ?
             ORDER BY w.created_at DESC
-        `);
+        `, [adminBotId]);
         return res.json({ success: true, withdrawals: rows });
     } catch (err) {
         console.error('[admin/withdrawals]', err);
@@ -526,7 +552,7 @@ router.post('/withdrawals/approve', async (req, res) => {
         try {
             await conn.beginTransaction();
 
-            const [withdrawals] = await conn.execute('SELECT * FROM withdrawals WHERE id = ? FOR UPDATE', [id]);
+            const [withdrawals] = await conn.execute('SELECT * FROM withdrawals WHERE id = ? AND bot_id = ? FOR UPDATE', [id, adminBotId]);
             const w = withdrawals[0];
 
             if (!w) {
@@ -542,12 +568,12 @@ router.post('/withdrawals/approve', async (req, res) => {
             }
 
             // Update status to done
-            await conn.execute('UPDATE withdrawals SET status = \'done\' WHERE id = ?', [id]);
+            await conn.execute('UPDATE withdrawals SET status = \'done\' WHERE id = ? AND bot_id = ?', [id, adminBotId]);
 
             // Notify user
             await conn.execute(
-                'INSERT INTO alerts (user_id, title, message, type) VALUES (?, ?, ?, \'success\')',
-                [w.user_id, 'Withdrawal Done', `Your withdrawal request of ${parseFloat(w.amount).toFixed(2)} ETB has been marked as DONE and transferred to your bank account!`, 'success']
+                'INSERT INTO alerts (user_id, title, message, type, bot_id) VALUES (?, ?, ?, \'success\', ?)',
+                [w.user_id, 'Withdrawal Done', `Your withdrawal request of ${parseFloat(w.amount).toFixed(2)} ETB has been marked as DONE and transferred to your bank account!`, adminBotId]
             );
 
             await conn.commit();
@@ -569,37 +595,39 @@ router.post('/withdrawals/approve', async (req, res) => {
 router.get('/finance-stats', async (req, res) => {
     try {
         // 1. Revenues (completed deposits)
-        const [[{ totalRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success')");
-        const [[{ todayRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as todayRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= CURDATE()");
-        const [[{ weeklyRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as weeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
-        const [[{ monthlyRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as monthlyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
+        const [[{ totalRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success') AND bot_id = ?", [adminBotId]);
+        const [[{ todayRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as todayRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= CURDATE() AND bot_id = ?", [adminBotId]);
+        const [[{ weeklyRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as weeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) AND bot_id = ?", [adminBotId]);
+        const [[{ monthlyRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as monthlyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND bot_id = ?", [adminBotId]);
 
         // Previous week's revenue (for growth %)
         const [[{ prevWeeklyRevenue }]] = await pool.execute(
-            "SELECT COALESCE(SUM(amount), 0) as prevWeeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)"
+            "SELECT COALESCE(SUM(amount), 0) as prevWeeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY) AND bot_id = ?",
+            [adminBotId]
         );
 
         // 2. Withdrawals
-        const [[{ totalWithdrawn }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalWithdrawn FROM withdrawals WHERE status = 'done'");
-        const [[{ todayWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as todayWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= CURDATE()");
-        const [[{ weeklyWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as weeklyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
-        const [[{ monthlyWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as monthlyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
-        const [[{ pendingWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as pendingWithdrawals FROM withdrawals WHERE status = 'pending'");
-        const [[{ totalWithdrawalsCount }]] = await pool.execute("SELECT COUNT(*) as totalWithdrawalsCount FROM withdrawals");
-        const [[{ totalWithdrawalsSum }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalWithdrawalsSum FROM withdrawals");
+        const [[{ totalWithdrawn }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalWithdrawn FROM withdrawals WHERE status = 'done' AND bot_id = ?", [adminBotId]);
+        const [[{ todayWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as todayWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= CURDATE() AND bot_id = ?", [adminBotId]);
+        const [[{ weeklyWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as weeklyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) AND bot_id = ?", [adminBotId]);
+        const [[{ monthlyWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as monthlyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND bot_id = ?", [adminBotId]);
+        const [[{ pendingWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as pendingWithdrawals FROM withdrawals WHERE status = 'pending' AND bot_id = ?", [adminBotId]);
+        const [[{ totalWithdrawalsCount }]] = await pool.execute("SELECT COUNT(*) as totalWithdrawalsCount FROM withdrawals WHERE bot_id = ?", [adminBotId]);
+        const [[{ totalWithdrawalsSum }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalWithdrawalsSum FROM withdrawals WHERE bot_id = ?", [adminBotId]);
 
         // 3. Wallet / Withdrawable Balance
-        const [[{ withdrawableBalance }]] = await pool.execute("SELECT COALESCE(SUM(balance), 0) as withdrawableBalance FROM auth");
+        const [[{ withdrawableBalance }]] = await pool.execute("SELECT COALESCE(SUM(balance), 0) as withdrawableBalance FROM auth WHERE bot_id = ?", [adminBotId]);
 
         // 4. Paying Users
-        const [[{ totalPayingUsers }]] = await pool.execute("SELECT COUNT(DISTINCT user_id) as totalPayingUsers FROM deposits WHERE status IN ('completed', 'success')");
+        const [[{ totalPayingUsers }]] = await pool.execute("SELECT COUNT(DISTINCT user_id) as totalPayingUsers FROM deposits WHERE status IN ('completed', 'success') AND bot_id = ?", [adminBotId]);
 
         // 5. Provider Costs (estimate based on profit margin / custom rates)
         const [orders] = await pool.execute(`
             SELECT o.*, sc.profit_margin, sc.custom_rate 
             FROM orders o 
-            LEFT JOIN service_custom sc ON o.service_id = sc.service_id
-        `);
+            LEFT JOIN service_custom sc ON o.service_id = sc.service_id AND sc.bot_id = o.bot_id
+            WHERE o.bot_id = ?
+        `, [adminBotId]);
 
         let providerCosts = 0;
         orders.forEach(o => {
@@ -655,7 +683,7 @@ router.get('/finance-stats', async (req, res) => {
 
 // Helper to send Telegram message
 async function sendTelegram(tgId, message, imageUrl) {
-    const token = process.env.BOT_TOKEN || '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk';
+    const token = process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
     if (!token) {
         throw new Error('BOT_TOKEN is not configured');
     }
@@ -696,7 +724,6 @@ async function sendTelegram(tgId, message, imageUrl) {
         };
     }
 
-
     const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -732,8 +759,8 @@ router.post('/send-telegram', async (req, res) => {
         }
 
         if (target === 'all') {
-            // Broadcast to all users
-            const [users] = await pool.execute('SELECT tg_id, first_name, username FROM auth WHERE tg_id IS NOT NULL');
+            // Broadcast to all users of this bot
+            const [users] = await pool.execute('SELECT tg_id, first_name, username FROM auth WHERE tg_id IS NOT NULL AND bot_id = ?', [adminBotId]);
             
             const results = [];
             
@@ -772,7 +799,7 @@ router.post('/send-telegram', async (req, res) => {
             // Get user's first name for personalization if target is a tg_id
             let personalizedText = message || '';
             try {
-                const [rows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? LIMIT 1', [target]);
+                const [rows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? AND bot_id = ? LIMIT 1', [target, adminBotId]);
                 if (rows.length > 0) {
                     const firstName = rows[0].first_name || 'User';
                     personalizedText = personalizedText
@@ -786,15 +813,15 @@ router.post('/send-telegram', async (req, res) => {
             const tgRes = await sendTelegram(target, personalizedText, imageUrl);
 
             const [result] = await pool.execute(
-                "INSERT INTO broadcasts (message, image_url, btn_text, btn_url, created_at) VALUES (?, ?, 'Open App 🎵', 'https://musical-caramel-cae47e.netlify.app/', NOW())",
-                [message || '', imageUrl || null]
+                "INSERT INTO broadcasts (message, image_url, btn_text, btn_url, bot_id, created_at) VALUES (?, ?, 'Open App 🎵', 'https://musical-caramel-cae47e.netlify.app/', ?, NOW())",
+                [message || '', imageUrl || null, adminBotId]
             );
             const broadcastId = result.insertId;
 
             if (tgRes && tgRes.ok && tgRes.result && tgRes.result.message_id) {
                 await pool.execute(
-                    'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-                    [broadcastId, target, tgRes.result.message_id, 'sent', null]
+                    'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, bot_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
+                    [broadcastId, target, tgRes.result.message_id, 'sent', null, adminBotId]
                 );
             }
 
@@ -808,7 +835,7 @@ router.post('/send-telegram', async (req, res) => {
 
 // Helper to send broadcast Telegram message
 async function sendBroadcastMessage(tgId, message, imageUrl, btnText = 'Open App 🎵', btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
-    const token = process.env.BOT_TOKEN || '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk';
+    const token = process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
     if (!token) {
         throw new Error('BOT_TOKEN is not configured');
     }
@@ -872,7 +899,7 @@ async function sendBroadcastMessage(tgId, message, imageUrl, btnText = 'Open App
 
 // Helper to edit Telegram message
 async function editTelegramMessage(tgId, messageId, newMessage, imageUrl, btnText = 'Open App 🎵', btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
-    const token = process.env.BOT_TOKEN || '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk';
+    const token = process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
     if (!token) {
         throw new Error('BOT_TOKEN is not configured');
     }
@@ -935,7 +962,7 @@ async function editTelegramMessage(tgId, messageId, newMessage, imageUrl, btnTex
 
 // Helper to delete Telegram message
 async function deleteTelegramMessage(tgId, messageId) {
-    const token = process.env.BOT_TOKEN || '8958935808:AAHIKPlmSFX5YhSMvIQuTUba9QC6QUes5xk';
+    const token = process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
     if (!token) {
         throw new Error('BOT_TOKEN is not configured');
     }
@@ -962,11 +989,12 @@ router.get('/broadcasts', async (req, res) => {
     try {
         const [rows] = await pool.execute(`
             SELECT b.*, 
-                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'sent') as sent_count,
-                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'failed') as failed_count
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'sent' AND bm.bot_id = b.bot_id) as sent_count,
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'failed' AND bm.bot_id = b.bot_id) as failed_count
             FROM broadcasts b
+            WHERE b.bot_id = ?
             ORDER BY b.created_at DESC
-        `);
+        `, [adminBotId]);
         return res.json(rows);
     } catch (err) {
         console.error('[admin/broadcasts GET]', err);
@@ -986,12 +1014,12 @@ router.post('/broadcasts', async (req, res) => {
         const bUrl = btnUrl || 'https://musical-caramel-cae47e.netlify.app/';
 
         const [result] = await pool.execute(
-            'INSERT INTO broadcasts (message, image_url, btn_text, btn_url, created_at) VALUES (?, ?, ?, ?, NOW())',
-            [message || '', imageUrl || null, bText, bUrl]
+            'INSERT INTO broadcasts (message, image_url, btn_text, btn_url, bot_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+            [message || '', imageUrl || null, bText, bUrl, adminBotId]
         );
         const broadcastId = result.insertId;
 
-        const [users] = await pool.execute('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL');
+        const [users] = await pool.execute('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL AND bot_id = ?', [adminBotId]);
 
         let sentCount = 0;
         let failedCount = 0;
@@ -1008,21 +1036,21 @@ router.post('/broadcasts', async (req, res) => {
                 if (tgRes && tgRes.ok && tgRes.result && tgRes.result.message_id) {
                     const msgId = tgRes.result.message_id;
                     await pool.execute(
-                        'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-                        [broadcastId, user.tg_id, msgId, 'sent', null]
+                        'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, bot_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
+                        [broadcastId, user.tg_id, msgId, 'sent', null, adminBotId]
                     );
                     sentCount++;
                 } else {
                     await pool.execute(
-                        'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-                        [broadcastId, user.tg_id, 0, 'failed', 'Invalid Telegram response']
+                        'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, bot_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
+                        [broadcastId, user.tg_id, 0, 'failed', 'Invalid Telegram response', adminBotId]
                     );
                     failedCount++;
                 }
             } catch (err) {
                 await pool.execute(
-                    'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-                    [broadcastId, user.tg_id, 0, 'failed', err.message]
+                    'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, bot_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
+                    [broadcastId, user.tg_id, 0, 'failed', err.message, adminBotId]
                 );
                 failedCount++;
             }
@@ -1050,13 +1078,13 @@ router.put('/broadcasts/:id', async (req, res) => {
         const bUrl = btnUrl || 'https://musical-caramel-cae47e.netlify.app/';
 
         await pool.execute(
-            'UPDATE broadcasts SET message = ?, image_url = ?, btn_text = ?, btn_url = ? WHERE id = ?',
-            [message || '', imageUrl || null, bText, bUrl, broadcastId]
+            'UPDATE broadcasts SET message = ?, image_url = ?, btn_text = ?, btn_url = ? WHERE id = ? AND bot_id = ?',
+            [message || '', imageUrl || null, bText, bUrl, broadcastId, adminBotId]
         );
 
         const [messages] = await pool.execute(
-            "SELECT tg_id, telegram_message_id, custom_message FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent'",
-            [broadcastId]
+            "SELECT tg_id, telegram_message_id, custom_message FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent' AND bot_id = ?",
+            [broadcastId, adminBotId]
         );
 
         let updatedCount = 0;
@@ -1064,7 +1092,7 @@ router.put('/broadcasts/:id', async (req, res) => {
 
         for (const msg of messages) {
             try {
-                const [uRows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? LIMIT 1', [msg.tg_id]);
+                const [uRows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? AND bot_id = ? LIMIT 1', [msg.tg_id, adminBotId]);
                 const firstName = uRows.length > 0 ? (uRows[0].first_name || 'User') : 'User';
                 
                 const textToEdit = msg.custom_message || message || '';
@@ -1097,8 +1125,8 @@ router.delete('/broadcasts/:id', async (req, res) => {
         const broadcastId = req.params.id;
 
         const [messages] = await pool.execute(
-            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent'",
-            [broadcastId]
+            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent' AND bot_id = ?",
+            [broadcastId, adminBotId]
         );
 
         let deletedCount = 0;
@@ -1113,7 +1141,7 @@ router.delete('/broadcasts/:id', async (req, res) => {
             }
         }
 
-        await pool.execute('DELETE FROM broadcasts WHERE id = ?', [broadcastId]);
+        await pool.execute('DELETE FROM broadcasts WHERE id = ? AND bot_id = ?', [broadcastId, adminBotId]);
 
         return res.json({
             success: true,
@@ -1133,10 +1161,10 @@ router.get('/broadcasts/:id/messages', async (req, res) => {
         const [rows] = await pool.execute(`
             SELECT bm.*, a.first_name, a.username 
             FROM broadcast_messages bm
-            LEFT JOIN auth a ON bm.tg_id = a.tg_id
-            WHERE bm.broadcast_id = ?
+            LEFT JOIN auth a ON bm.tg_id = a.tg_id AND a.bot_id = bm.bot_id
+            WHERE bm.broadcast_id = ? AND bm.bot_id = ?
             ORDER BY bm.created_at ASC
-        `, [broadcastId]);
+        `, [broadcastId, adminBotId]);
         return res.json(rows);
     } catch (err) {
         console.error('[admin/broadcasts/:id/messages GET]', err);
@@ -1154,8 +1182,8 @@ router.put('/broadcasts/messages/:msg_id', async (req, res) => {
             SELECT bm.*, b.btn_text, b.btn_url 
             FROM broadcast_messages bm
             JOIN broadcasts b ON bm.broadcast_id = b.id
-            WHERE bm.id = ? AND bm.status = 'sent'
-        `, [msgId]);
+            WHERE bm.id = ? AND bm.status = 'sent' AND bm.bot_id = ?
+        `, [msgId, adminBotId]);
         const msgRecord = records[0];
 
         if (!msgRecord) {
@@ -1171,7 +1199,7 @@ router.put('/broadcasts/messages/:msg_id', async (req, res) => {
             msgRecord.btn_url
         );
 
-        await pool.execute('UPDATE broadcast_messages SET custom_message = ? WHERE id = ?', [message, msgId]);
+        await pool.execute('UPDATE broadcast_messages SET custom_message = ? WHERE id = ? AND bot_id = ?', [message, msgId, adminBotId]);
 
         return res.json({ success: true });
     } catch (err) {
@@ -1186,8 +1214,8 @@ router.delete('/broadcasts/messages/:msg_id', async (req, res) => {
         const msgId = req.params.msg_id;
 
         const [records] = await pool.execute(
-            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE id = ? AND status = 'sent'",
-            [msgId]
+            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE id = ? AND status = 'sent' AND bot_id = ?",
+            [msgId, adminBotId]
         );
         const msgRecord = records[0];
 
@@ -1195,7 +1223,7 @@ router.delete('/broadcasts/messages/:msg_id', async (req, res) => {
             await deleteTelegramMessage(msgRecord.tg_id, msgRecord.telegram_message_id);
         }
 
-        await pool.execute('DELETE FROM broadcast_messages WHERE id = ?', [msgId]);
+        await pool.execute('DELETE FROM broadcast_messages WHERE id = ? AND bot_id = ?', [msgId, adminBotId]);
 
         return res.json({ success: true });
     } catch (err) {
