@@ -33,7 +33,8 @@ router.get('/settings', async (req, res) => {
             maintenanceMode: false,
             userCanOrder: true,
             marqueeText: 'Welcome to Paxyo SMM!',
-            topServicesIds: []
+            topServicesIds: [],
+            botUsername: 'eertert_bot'
         };
         
         rows.forEach(row => {
@@ -43,6 +44,7 @@ router.get('/settings', async (req, res) => {
             if (row.setting_key === 'maintenance_mode') settings.maintenanceMode = (row.setting_value === '1' || row.setting_value === 'true');
             if (row.setting_key === 'user_can_order') settings.userCanOrder = (row.setting_value === '1' || row.setting_value === 'true');
             if (row.setting_key === 'marquee_text') settings.marqueeText = row.setting_value;
+            if (row.setting_key === 'bot_username') settings.botUsername = row.setting_value || 'eertert_bot';
             if (row.setting_key === 'top_services_ids') {
                 settings.topServicesIds = row.setting_value
                     ? row.setting_value.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n))
@@ -53,7 +55,7 @@ router.get('/settings', async (req, res) => {
         return res.json(settings);
     } catch (err) {
         console.error(err);
-        return res.json({ rateMultiplier: 55, discountPercent: 0, holidayName: '', maintenanceMode: false, userCanOrder: true, marqueeText: '', topServicesIds: [] });
+        return res.json({ rateMultiplier: 55, discountPercent: 0, holidayName: '', maintenanceMode: false, userCanOrder: true, marqueeText: '', topServicesIds: [], botUsername: 'eertert_bot' });
     }
 });
 
