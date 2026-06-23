@@ -27,6 +27,16 @@ const app = express();
     try {
         const conn = await pool.getConnection();
         try {
+            // Ensure auth table has composite unique key (tg_id, bot_id) instead of just tg_id
+            try {
+                await conn.execute('ALTER TABLE auth DROP INDEX tg_id');
+                console.log('[Startup] Dropped old UNIQUE KEY (tg_id) from auth table');
+            } catch (e) {}
+            try {
+                await conn.execute('ALTER TABLE auth ADD UNIQUE KEY tg_id_bot_id (tg_id, bot_id)');
+                console.log('[Startup] Added composite UNIQUE KEY (tg_id, bot_id) to auth table');
+            } catch (e) {}
+
             // Ensure orders custom_fields exists
             try {
                 await conn.execute('ALTER TABLE orders ADD COLUMN custom_fields JSON AFTER status');

@@ -41,7 +41,8 @@ router.post('/', async (req, res) => {
         }
 
         // ─── Authenticate user via Telegram initData ─────────
-        const { botId, user: tgUser } = getBotIdAndUser(initData);
+        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+        const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
         const tgId = tgUser?.id ? String(tgUser.id) : null;
         if (!tgId) {
             return res.json({ success: false, error: 'User not authenticated' });

@@ -26,7 +26,8 @@ async function handleGetDeposits(req, res) {
         if (limit > 50) limit = 50; // Cap at 50
 
         // Authenticate user
-        const { botId, user: tgUser } = getBotIdAndUser(initData);
+        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+        const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
         const tgId = tgUser?.id ? String(tgUser.id) : null;
         if (!tgId) {
             return res.status(401).json({ success: false, error: 'User not authenticated' });

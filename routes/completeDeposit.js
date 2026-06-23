@@ -32,7 +32,8 @@ router.post('/', async (req, res) => {
         const amount = parseFloat(rawAmount) || 0;
 
         // ─── Authenticate user ───────────────────────────────
-        const { botId, user: tgUser } = getBotIdAndUser(initData);
+        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+        const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
         const tgId = tgUser?.id ? String(tgUser.id) : null;
         if (!tgId) {
             conn.release();

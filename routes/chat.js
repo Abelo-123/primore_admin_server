@@ -6,7 +6,8 @@ const router = Router();
 
 router.post('/', async (req, res) => {
     const { initData, action, message } = req.body;
-    const { botId, user: tgUser } = getBotIdAndUser(initData);
+    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+    const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
     if (!tgId) return res.status(401).json({ success: false, error: 'Not authenticated' });
 

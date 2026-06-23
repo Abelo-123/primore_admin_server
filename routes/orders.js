@@ -27,7 +27,8 @@ router.post('/place', async (req, res) => {
     try {
         const { service, link, quantity, initData, answer_number, comments } = req.body;
         
-        const { botId, user: tgUser } = getBotIdAndUser(initData);
+        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+        const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
         const tgId = tgUser?.id ? String(tgUser.id) : null;
         if (!tgId) {
             return res.status(401).json({ success: false, error: 'User not authenticated' });
@@ -148,7 +149,8 @@ router.post('/place', async (req, res) => {
 // getOrders
 router.post('/list', async (req, res) => {
     const { initData } = req.body;
-    const { botId, user: tgUser } = getBotIdAndUser(initData);
+    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+    const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
     if (!tgId) return res.status(401).json({ error: 'Not authenticated' });
 
@@ -175,7 +177,8 @@ router.post('/list', async (req, res) => {
 // checkOrderStatus
 router.post('/status', async (req, res) => {
     const { initData } = req.body;
-    const { botId, user: tgUser } = getBotIdAndUser(initData);
+    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+    const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
     if (!tgId) return res.status(401).json({ error: 'Not authenticated' });
 
@@ -215,7 +218,8 @@ router.post('/status', async (req, res) => {
 // requestRefill
 router.post('/refill', async (req, res) => {
     const { initData, order_id } = req.body;
-    const { botId, user: tgUser } = getBotIdAndUser(initData);
+    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+    const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
     if (!tgId) return res.status(401).json({ error: 'Not authenticated' });
 
@@ -238,7 +242,8 @@ router.post('/refill', async (req, res) => {
 // SSE stream: GET /api/orders/stream?initData=...
 router.get('/stream', (req, res) => {
     const rawInitData = req.query.initData;
-    const { botId, user: tgUser } = getBotIdAndUser(rawInitData);
+    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+    const { botId, user: tgUser } = getBotIdAndUser(rawInitData, reqBotId);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
 
     if (!tgId) {

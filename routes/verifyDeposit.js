@@ -29,7 +29,8 @@ router.post('/', async (req, res) => {
         const { tx_ref: txRef, initData } = req.body;
 
         // ─── Authenticate user ──────────────────────────────
-        const { botId, user: tgUser } = getBotIdAndUser(initData);
+        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+        const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
         const tgId = tgUser?.id ? String(tgUser.id) : null;
         if (!tgId) {
             conn.release();

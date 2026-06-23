@@ -25,7 +25,7 @@ async function migrate() {
             last_deposit DATETIME,
             last_order DATETIME,
             total_spent DECIMAL(10, 2) DEFAULT 0.00,
-            UNIQUE KEY (tg_id)
+            UNIQUE KEY tg_id_bot_id (tg_id, bot_id)
         )`;
         await conn.execute(createAuth);
         console.log('Auth table checked/created.');

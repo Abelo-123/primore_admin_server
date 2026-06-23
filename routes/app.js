@@ -9,7 +9,8 @@ const router = Router();
 router.get('/settings', async (req, res) => {
     try {
         const initData = req.query.initData || '';
-        const { botId } = getBotIdAndUser(initData);
+        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+        const { botId } = getBotIdAndUser(initData, reqBotId);
         let [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings WHERE bot_id = ?', [botId]);
         
         if (rows.length === 0) {
@@ -60,7 +61,8 @@ router.get('/settings', async (req, res) => {
 router.get('/recommended', async (req, res) => {
     try {
         const initData = req.query.initData || '';
-        const { botId } = getBotIdAndUser(initData);
+        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+        const { botId } = getBotIdAndUser(initData, reqBotId);
         const [rows] = await pool.execute(
             'SELECT setting_value FROM settings WHERE setting_key = "top_services_ids" AND bot_id = ?',
             [botId]
@@ -82,7 +84,8 @@ router.get('/recommended', async (req, res) => {
 // get alerts
 router.post('/alerts', async (req, res) => {
     const { initData } = req.body;
-    const { botId, user } = getBotIdAndUser(initData);
+    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+    const { botId, user } = getBotIdAndUser(initData, reqBotId);
     const tgId = user?.id ? String(user.id) : null;
     if (!tgId) return res.json({ success: false, unreadCount: 0, alerts: [] });
 
@@ -99,7 +102,8 @@ router.post('/alerts', async (req, res) => {
 // mark alerts read
 router.post('/alerts/mark-read', async (req, res) => {
     const { initData } = req.body;
-    const { botId, user } = getBotIdAndUser(initData);
+    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+    const { botId, user } = getBotIdAndUser(initData, reqBotId);
     const tgId = user?.id ? String(user.id) : null;
     if (!tgId) return res.json({ success: false });
 
@@ -115,7 +119,8 @@ router.post('/alerts/mark-read', async (req, res) => {
 // auth (for telegram_auth.php)
 router.post('/auth', async (req, res) => {
     const { initData } = req.body;
-    const { botId, user: tgUser } = getBotIdAndUser(initData);
+    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
+    const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
     
     if (!tgId) return res.status(401).json({ success: false });
