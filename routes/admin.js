@@ -683,9 +683,9 @@ router.get('/finance-stats', async (req, res) => {
 
 // Helper to send Telegram message
 async function sendTelegram(tgId, message, imageUrl) {
-    const token = process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
+    const token = process.env.CLIENT_BOT_TOKEN || process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
     if (!token) {
-        throw new Error('BOT_TOKEN is not configured');
+        throw new Error('BOT_TOKEN or CLIENT_BOT_TOKEN is not configured');
     }
     
     const replyMarkup = {
@@ -835,9 +835,9 @@ router.post('/send-telegram', async (req, res) => {
 
 // Helper to send broadcast Telegram message
 async function sendBroadcastMessage(tgId, message, imageUrl, btnText = 'Open App 🎵', btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
-    const token = process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
+    const token = process.env.CLIENT_BOT_TOKEN || process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
     if (!token) {
-        throw new Error('BOT_TOKEN is not configured');
+        throw new Error('BOT_TOKEN or CLIENT_BOT_TOKEN is not configured');
     }
     
     const replyMarkup = {
@@ -899,9 +899,9 @@ async function sendBroadcastMessage(tgId, message, imageUrl, btnText = 'Open App
 
 // Helper to edit Telegram message
 async function editTelegramMessage(tgId, messageId, newMessage, imageUrl, btnText = 'Open App 🎵', btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
-    const token = process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
+    const token = process.env.CLIENT_BOT_TOKEN || process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
     if (!token) {
-        throw new Error('BOT_TOKEN is not configured');
+        throw new Error('BOT_TOKEN or CLIENT_BOT_TOKEN is not configured');
     }
 
     const replyMarkup = {
@@ -962,9 +962,9 @@ async function editTelegramMessage(tgId, messageId, newMessage, imageUrl, btnTex
 
 // Helper to delete Telegram message
 async function deleteTelegramMessage(tgId, messageId) {
-    const token = process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
+    const token = process.env.CLIENT_BOT_TOKEN || process.env.BOT_TOKEN || '8731737556:AAGkhIskrrQMAXdbCfEiz0RJkdqDYJ7lmKE';
     if (!token) {
-        throw new Error('BOT_TOKEN is not configured');
+        throw new Error('BOT_TOKEN or CLIENT_BOT_TOKEN is not configured');
     }
 
     const url = `https://api.telegram.org/bot${token}/deleteMessage`;
