@@ -137,7 +137,7 @@ app.use((req, res, next) => {
         const duration = Date.now() - start;
         const timestamp = new Date().toISOString();
         const userId = req.headers['x-user-id'] || req.body?.userId || req.body?.tg_id || req.body?.uid || req.query?.user_id || 'unauthenticated';
-        const summary = req.method !== 'GET' ? JSON.stringify(req.body).substring(0, 100) : '';
+        const summary = req.method !== 'GET' && req.body ? (JSON.stringify(req.body) || '').substring(0, 100) : '';
         console.log(`[${timestamp}] ${req.method} ${req.originalUrl} | User: ${userId} | Status: ${res.statusCode} | Duration: ${duration}ms | Payload: ${summary}`);
     });
     next();
