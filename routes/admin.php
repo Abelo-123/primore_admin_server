@@ -714,11 +714,11 @@ if ($route === '/admin/services/activity' && $method === 'GET') {
         $stmt = $pdo->prepare('
             SELECT sc.*, a.username, a.first_name 
             FROM service_custom sc 
-            LEFT JOIN auth a ON sc.updated_by = a.tg_id AND a.bot_id = :bot_id
-            WHERE sc.bot_id = :bot_id
+            LEFT JOIN auth a ON sc.updated_by = a.tg_id AND a.bot_id = :bot_id_auth
+            WHERE sc.bot_id = :bot_id_sc
             ORDER BY sc.updated_at DESC LIMIT 20
         ');
-        $stmt->execute(['bot_id' => $botIdHeader]);
+        $stmt->execute(['bot_id_auth' => $botIdHeader, 'bot_id_sc' => $botIdHeader]);
         $rows = $stmt->fetchAll();
         foreach ($rows as &$r) {
             $r['id'] = (int)$r['id'];
@@ -762,12 +762,12 @@ if ($route === '/admin/chat/sessions' && $method === 'GET') {
         $stmt = $pdo->prepare('
             SELECT c.user_id, a.username, a.first_name, MAX(c.created_at) as last_message_at
             FROM chat_messages c
-            LEFT JOIN auth a ON c.user_id = a.tg_id AND a.bot_id = :bot_id
-            WHERE c.bot_id = :bot_id
+            LEFT JOIN auth a ON c.user_id = a.tg_id AND a.bot_id = :bot_id_auth
+            WHERE c.bot_id = :bot_id_chat
             GROUP BY c.user_id, a.username, a.first_name
             ORDER BY last_message_at DESC
         ');
-        $stmt->execute(['bot_id' => $botIdHeader]);
+        $stmt->execute(['bot_id_auth' => $botIdHeader, 'bot_id_chat' => $botIdHeader]);
         echo json_encode($stmt->fetchAll());
     } catch (Exception $e) {
         http_response_code(500);
@@ -966,10 +966,10 @@ if ($route === '/admin/finance-stats' && $method === 'GET') {
         $stmt = $pdo->prepare("
             SELECT o.*, sc.profit_margin, sc.custom_rate 
             FROM orders o 
-            LEFT JOIN service_custom sc ON o.service_id = sc.service_id AND sc.bot_id = :bot_id
-            WHERE o.bot_id = :bot_id
+            LEFT JOIN service_custom sc ON o.service_id = sc.service_id AND sc.bot_id = :bot_id_sc
+            WHERE o.bot_id = :bot_id_orders
         ");
-        $stmt->execute(['bot_id' => $botIdHeader]);
+        $stmt->execute(['bot_id_sc' => $botIdHeader, 'bot_id_orders' => $botIdHeader]);
         $orders = $stmt->fetchAll();
         $providerCosts = 0.0;
         foreach ($orders as $o) {
