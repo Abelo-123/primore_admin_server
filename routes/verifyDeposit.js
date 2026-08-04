@@ -119,9 +119,9 @@ router.post('/', async (req, res) => {
 
             // Record transaction
             await conn.execute(
-                `INSERT INTO transactions (user_id, bot_id, type, amount, balance_after, reference_type, reference_id, description)
-                 VALUES (?, ?, 'deposit', ?, ?, 'deposit', ?, 'Chapa deposit (verified)')`,
-                [String(deposit.user_id), botId, verifiedAmount, newBalance, deposit.id]
+                `INSERT INTO transactions (user_id, bot_id, type, amount, balance_after, description)
+                 VALUES (?, ?, 'deposit', ?, ?, 'Chapa deposit (verified)')`,
+                [String(deposit.user_id), botId, verifiedAmount, newBalance]
             );
 
             await conn.commit();
