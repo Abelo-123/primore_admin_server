@@ -107,6 +107,38 @@ const app = express();
                 await conn.execute('ALTER TABLE service_custom ADD COLUMN custom_description TEXT');
                 console.log('[Startup] Checked/Added custom_description column to service_custom table');
             } catch (e) {}
+
+            // Ensure transactions table exists with correct schema
+            await conn.execute(`
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id VARCHAR(255) NOT NULL,
+                    bot_id VARCHAR(255) DEFAULT NULL,
+                    type VARCHAR(50) NOT NULL,
+                    amount DECIMAL(10, 2) NOT NULL,
+                    balance_after DECIMAL(10, 2) NOT NULL,
+                    reference_type VARCHAR(50),
+                    reference_id INT,
+                    description TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            `);
+            // Add bot_id to transactions if missing
+            try {
+                await conn.execute('ALTER TABLE transactions ADD COLUMN bot_id VARCHAR(255) DEFAULT NULL AFTER user_id');
+                console.log('[Startup] Added bot_id column to transactions table');
+            } catch (e) {}
+            // Add reference_id to transactions if missing
+            try {
+                await conn.execute('ALTER TABLE transactions ADD COLUMN reference_id INT DEFAULT NULL');
+                console.log('[Startup] Added reference_id column to transactions table');
+            } catch (e) {}
+            // Add reference_type to transactions if missing
+            try {
+                await conn.execute('ALTER TABLE transactions ADD COLUMN reference_type VARCHAR(50) DEFAULT NULL');
+                console.log('[Startup] Added reference_type column to transactions table');
+            } catch (e) {}
+            console.log('[Startup] Transactions table checked/ready.');
         } finally {
             conn.release();
         }
