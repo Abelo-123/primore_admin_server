@@ -148,6 +148,36 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
+app.get('/api/debug/env', (req, res) => {
+    const maskedEnv = {};
+    const sensitiveKeywords = [
+        'key', 'pass', 'secret', 'token', 'pwd', 'credential', 'auth', 'private', 'cert', 'database', 'db', 'url', 'uri', 'conn', 'hash', 'salt'
+    ];
+
+    for (const key of Object.keys(process.env)) {
+        const value = process.env[key] || '';
+        const lowerKey = key.toLowerCase();
+        const isSensitive = sensitiveKeywords.some(keyword => lowerKey.includes(keyword));
+
+        if (isSensitive) {
+            if (value.length > 8) {
+                maskedEnv[key] = `${value.substring(0, 3)}...${value.substring(value.length - 3)} (len: ${value.length})`;
+            } else if (value.length > 0) {
+                maskedEnv[key] = `*** (len: ${value.length})`;
+            } else {
+                maskedEnv[key] = '[EMPTY]';
+            }
+        } else {
+            maskedEnv[key] = value;
+        }
+    }
+
+    res.json({
+        status: 'success',
+        env: maskedEnv
+    });
+});
+
 
 
 // Chapa Routes
