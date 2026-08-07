@@ -403,10 +403,14 @@ router.post('/settings', async (req, res) => {
             }
         }
 
-        // Upsert: INSERT ... ON DUPLICATE KEY UPDATE
+        // Upsert for adminBotId and update all matching key rows so client endpoints read updated value regardless of bot_id
         await pool.execute(
             'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
             [key, adminBotId, value, value]
+        );
+        await pool.execute(
+            'UPDATE settings SET setting_value = ? WHERE setting_key = ?',
+            [value, key]
         );
 
         return res.json({ success: true });
