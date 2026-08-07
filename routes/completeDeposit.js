@@ -117,6 +117,12 @@ router.post('/', async (req, res) => {
                 [verifiedAmount, deposit.user_id, botId]
             );
 
+            // Increment panel total_deposit metric
+            await conn.execute(
+                'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ("total_deposit", ?, ?) ON DUPLICATE KEY UPDATE setting_value = CAST(setting_value AS DECIMAL(10,2)) + ?',
+                [botId, verifiedAmount.toFixed(2), verifiedAmount]
+            );
+
             // Get new balance
             const [balRows] = await conn.execute(
                 'SELECT balance FROM auth WHERE tg_id = ? AND bot_id = ?',

@@ -73,6 +73,20 @@ router.post('/place', async (req, res) => {
                 return res.json({ success: false, error: 'Insufficient balance' });
             }
 
+            // Check reseller balance with joadmin
+            const [resellerRows] = await conn.execute(
+                'SELECT setting_value FROM settings WHERE setting_key = "reseller_balance" AND bot_id = ?',
+                [botId]
+            );
+            const resellerBal = resellerRows.length > 0 ? parseFloat(resellerRows[0].setting_value || '0') : 0;
+            if (resellerBal < totalCostEtb) {
+                await conn.rollback();
+                return res.json({
+                    success: false,
+                    error: 'Order could not be processed due to insufficient reseller balance. Please notify admin.'
+                });
+            }
+
             // 4. Place order to GodOfPanel
             const orderParams = new URLSearchParams({
                 key: apiKey,
@@ -97,8 +111,15 @@ router.post('/place', async (req, res) => {
 
             const providerOrderId = orderData.order;
 
-            // 5. Update user balance
+            // 5. Update user balance & reseller balance
             await conn.execute('UPDATE auth SET balance = balance - ?, last_order = NOW(), total_spent = total_spent + ? WHERE tg_id = ? AND bot_id = ?', [totalCostEtb, totalCostEtb, tgId, botId]);
+            
+            // Deduct reseller balance
+            const newResellerBal = Math.max(0, resellerBal - totalCostEtb).toFixed(2);
+            await conn.execute(
+                'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ("reseller_balance", ?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
+                [botId, newResellerBal, newResellerBal]
+            );
 
             // Get new balance
             const [newBalRows] = await conn.execute('SELECT balance FROM auth WHERE tg_id = ? AND bot_id = ?', [tgId, botId]);

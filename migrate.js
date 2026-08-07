@@ -219,6 +219,24 @@ async function migrate() {
         await conn.execute(createWithdrawals);
         console.log('Withdrawals table checked/created.');
 
+        // 11. Ensure `admin_withdrawals` table exists
+        const createAdminWithdrawals = `
+        CREATE TABLE IF NOT EXISTS admin_withdrawals (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            amount DECIMAL(10, 2) NOT NULL,
+            bank_name VARCHAR(255) NOT NULL,
+            account_number VARCHAR(255) NOT NULL,
+            account_name VARCHAR(255),
+            status VARCHAR(50) DEFAULT 'completed',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`;
+        await conn.execute(createAdminWithdrawals);
+        console.log('Admin withdrawals table checked/created.');
+
+        // Initialize default reseller settings if missing
+        await conn.execute('INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ("reseller_balance", "0.00")');
+        await conn.execute('INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ("total_deposit", "0.00")');
+
         conn.release();
         console.log('--- Migration & Optimization Complete! ---');
         process.exit(0);

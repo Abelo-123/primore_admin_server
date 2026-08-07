@@ -345,6 +345,23 @@ router.get('/deposits', async (req, res) => {
     }
 });
 
+// Helper to fetch minimum multiplicity set by main admin (joadmin)
+async function getJoadminMinMultiplier() {
+    try {
+        const joadminUrl = process.env.JOADMIN_SERVER_URL || 'https://padmin121.onrender.com';
+        const res = await fetch(`${joadminUrl}/api/admin/reseller/min-multiplier`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.min_rate_multiplier) {
+                return parseFloat(data.min_rate_multiplier) || 55;
+            }
+        }
+    } catch (e) {
+        console.error('[getJoadminMinMultiplier] Failed to fetch from joadmin:', e.message);
+    }
+    return 55;
+}
+
 // ─── Settings ───────────────────────────────────────────────────
 router.get('/settings', async (req, res) => {
     try {
@@ -352,14 +369,19 @@ router.get('/settings', async (req, res) => {
         const settings = {};
         rows.forEach(r => { settings[r.setting_key] = r.setting_value; });
 
+        const minAllowed = await getJoadminMinMultiplier();
+
         return res.json({
             rate_multiplier: settings.rate_multiplier || '55',
+            min_rate_multiplier: String(minAllowed),
             discount_percent: settings.discount_percent || '0',
             holiday_name: settings.holiday_name || '',
             maintenance_mode: settings.maintenance_mode || '0',
             user_can_order: settings.user_can_order || '1',
             marquee_text: settings.marquee_text || '',
             top_services_ids: settings.top_services_ids || '',
+            reseller_balance: settings.reseller_balance || '0.00',
+            total_deposit: settings.total_deposit || '0.00',
         });
     } catch (err) {
         console.error('[admin/settings]', err);
@@ -372,6 +394,15 @@ router.post('/settings', async (req, res) => {
         const { key, value } = req.body;
         if (!key) return res.status(400).json({ error: 'key is required' });
 
+        if (key === 'rate_multiplier') {
+            const minAllowed = await getJoadminMinMultiplier();
+            if (parseFloat(value) < minAllowed) {
+                return res.status(400).json({
+                    error: `Rate multiplier (${value}) cannot be lower than the minimum multiplicity baseline (${minAllowed}) set by main admin (joadmin).`
+                });
+            }
+        }
+
         // Upsert: INSERT ... ON DUPLICATE KEY UPDATE
         await pool.execute(
             'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
@@ -382,6 +413,97 @@ router.post('/settings', async (req, res) => {
     } catch (err) {
         console.error('[admin/settings]', err);
         return res.status(500).json({ error: 'Failed to update setting' });
+    }
+});
+
+// ─── Reseller Balance & Operations ──────────────────────────────────
+router.get('/reseller/status', async (req, res) => {
+    try {
+        const [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings WHERE bot_id = ?', [adminBotId]);
+        const settings = {};
+        rows.forEach(r => { settings[r.setting_key] = r.setting_value; });
+
+        const minAllowed = await getJoadminMinMultiplier();
+
+        return res.json({
+            success: true,
+            reseller_balance: parseFloat(settings.reseller_balance || '0'),
+            total_deposit: parseFloat(settings.total_deposit || '0'),
+            min_rate_multiplier: minAllowed,
+            rate_multiplier: parseFloat(settings.rate_multiplier || '55')
+        });
+    } catch (err) {
+        console.error('[admin/reseller/status]', err);
+        return res.status(500).json({ error: 'Failed to fetch reseller status' });
+    }
+});
+
+router.post('/reseller/add-balance', async (req, res) => {
+    try {
+        const amount = parseFloat(req.body.amount);
+        if (isNaN(amount) || amount <= 0) {
+            return res.status(400).json({ error: 'Invalid deposit amount' });
+        }
+
+        const [rows] = await pool.execute(
+            'SELECT setting_value FROM settings WHERE setting_key = "reseller_balance" AND bot_id = ?',
+            [adminBotId]
+        );
+        const currentBal = rows.length > 0 ? parseFloat(rows[0].setting_value || '0') : 0;
+        const newBal = (currentBal + amount).toFixed(2);
+
+        await pool.execute(
+            'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ("reseller_balance", ?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
+            [adminBotId, newBal, newBal]
+        );
+
+        return res.json({ success: true, new_balance: parseFloat(newBal) });
+    } catch (err) {
+        console.error('[admin/reseller/add-balance]', err);
+        return res.status(500).json({ error: 'Failed to add balance' });
+    }
+});
+
+router.post('/reseller/withdraw-deposit', async (req, res) => {
+    try {
+        const amount = parseFloat(req.body.amount);
+        const { bank_name, account_number, account_name } = req.body;
+
+        if (isNaN(amount) || amount <= 0) {
+            return res.status(400).json({ error: 'Invalid withdrawal amount' });
+        }
+        if (!bank_name || !account_number) {
+            return res.status(400).json({ error: 'Bank name and account number are required' });
+        }
+
+        const [rows] = await pool.execute(
+            'SELECT setting_value FROM settings WHERE setting_key = "total_deposit" AND bot_id = ?',
+            [adminBotId]
+        );
+        const currentTotal = rows.length > 0 ? parseFloat(rows[0].setting_value || '0') : 0;
+
+        if (amount > currentTotal) {
+            return res.status(400).json({
+                error: `Withdrawal amount (${amount} ETB) exceeds available Total Deposit balance (${currentTotal.toFixed(2)} ETB)`
+            });
+        }
+
+        const newTotal = (currentTotal - amount).toFixed(2);
+
+        await pool.execute(
+            'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ("total_deposit", ?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
+            [adminBotId, newTotal, newTotal]
+        );
+
+        await pool.execute(
+            'INSERT INTO admin_withdrawals (amount, bank_name, account_number, account_name, status, created_at) VALUES (?, ?, ?, ?, "completed", NOW())',
+            [amount, bank_name, account_number, account_name || '']
+        );
+
+        return res.json({ success: true, new_total_deposit: parseFloat(newTotal) });
+    } catch (err) {
+        console.error('[admin/reseller/withdraw-deposit]', err);
+        return res.status(500).json({ error: 'Failed to process withdrawal' });
     }
 });
 
