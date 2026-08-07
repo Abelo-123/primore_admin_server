@@ -41,9 +41,22 @@ router.post('/place', async (req, res) => {
         try {
             await conn.beginTransaction();
             
-            // 1. Get rate multiplier
-            const [settingsRows] = await conn.execute('SELECT setting_value FROM settings WHERE setting_key = "rate_multiplier" AND bot_id = ?', [botId]);
-            const rateMultiplier = settingsRows.length > 0 ? parseFloat(settingsRows[0].setting_value) : 55.0;
+            // 1. Get combined rate multiplier (joadmin * primora)
+            let joadminMult = 55.0;
+            try {
+                const joadminUrl = process.env.JOADMIN_SERVER_URL || 'https://padmin121.onrender.com';
+                const jRes = await fetch(`${joadminUrl}/api/admin/reseller/min-multiplier`);
+                if (jRes.ok) {
+                    const jData = await jRes.json();
+                    if (jData && (jData.joadmin_multiplier || jData.rate_multiplier || jData.min_rate_multiplier)) {
+                        joadminMult = parseFloat(jData.joadmin_multiplier || jData.rate_multiplier || jData.min_rate_multiplier) || 55.0;
+                    }
+                }
+            } catch (e) {}
+
+            const [settingsRows] = await conn.execute('SELECT setting_value FROM settings WHERE setting_key = "rate_multiplier" ORDER BY (bot_id = ?) DESC LIMIT 1', [botId]);
+            const primoraMult = settingsRows.length > 0 ? parseFloat(settingsRows[0].setting_value) : 1.0;
+            const rateMultiplier = primoraMult <= 10.0 ? (joadminMult * primoraMult) : (primoraMult * (joadminMult / 55.0));
 
             // 2. Lock user row to prevent race conditions
             const [userRows] = await conn.execute('SELECT * FROM auth WHERE tg_id = ? AND bot_id = ? FOR UPDATE', [tgId, botId]);
