@@ -2168,3 +2168,60 @@ if ($route === '/admin/reseller/withdrawal-history' && $method === 'GET') {
 }
 
 
+// ─── ROUTE: /admin/reseller/status (GET) ─────────────────────────────
+if ($route === '/admin/reseller/status' && $method === 'GET') {
+    try {
+        global $adminBotId;
+        $stmt = $pdo->prepare("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('reseller_balance', 'total_deposit', 'rate_multiplier', 'min_rate_multiplier') AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $adminBotId]);
+        $rows = $stmt->fetchAll();
+        
+        $settings = [];
+        foreach ($rows as $r) {
+            $settings[$r['setting_key']] = $r['setting_value'];
+        }
+        
+        $balance = isset($settings['reseller_balance']) ? (float)$settings['reseller_balance'] : 0.0;
+        $totalDeposit = isset($settings['total_deposit']) ? (float)$settings['total_deposit'] : 0.0;
+        $multiplier = isset($settings['rate_multiplier']) ? (float)$settings['rate_multiplier'] : 1.0;
+        $minMultiplier = isset($settings['min_rate_multiplier']) ? (float)$settings['min_rate_multiplier'] : 1.0;
+        
+        echo json_encode([
+            'success'              => true,
+            'reseller_balance'     => $balance,
+            'total_deposit'        => $totalDeposit,
+            'rate_multiplier'      => $multiplier,
+            'min_rate_multiplier'  => $minMultiplier
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+
+// ─── ROUTE: /admin/reseller/deposit/history (GET) ────────────────────
+if ($route === '/admin/reseller/deposit/history' && $method === 'GET') {
+    try {
+        $stmt = $pdo->query("SELECT * FROM reseller_deposits ORDER BY created_at DESC LIMIT 50");
+        $rows = $stmt->fetchAll();
+        
+        foreach ($rows as &$r) {
+            $r['id'] = (int)$r['id'];
+            $r['amount'] = (float)$r['amount'];
+        }
+        
+        echo json_encode([
+            'success' => true,
+            'deposits' => $rows
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+
+
