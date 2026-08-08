@@ -218,14 +218,16 @@ if ($route === '/orders/place') {
         // Calculate wholesale reseller cost (cost to Primora)
         $resellerCostEtb = max(0.01, (float)number_format($baseRateEtb * ($quantity / 1000), 2, '.', ''));
 
-        // Fetch reseller_balance from settings
-        $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'reseller_balance' LIMIT 1");
-        $stmt->execute();
+        // Fetch reseller_balance from settings using user's bot_id
+        $botId = isset($user['bot_id']) ? $user['bot_id'] : $adminBotId;
+        $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id LIMIT 1");
+        $stmt->execute(['bot_id' => $botId]);
         $resellerRow = $stmt->fetch();
         $resellerBalance = $resellerRow ? (float)$resellerRow['setting_value'] : 0.0;
 
-        // Fetch sum of reseller_cost of all currently pending or processing orders
-        $stmt = $pdo->query("SELECT SUM(reseller_cost) FROM orders WHERE status IN ('pending', 'processing', 'inprogress', 'in_progress')");
+        // Fetch sum of reseller_cost of all currently pending or processing orders for this specific bot
+        $stmt = $pdo->prepare("SELECT SUM(reseller_cost) FROM orders WHERE status IN ('pending', 'processing', 'inprogress', 'in_progress') AND bot_id = :bot_id");
+        $stmt->execute(['bot_id' => $botId]);
         $pendingCost = (float)($stmt->fetchColumn() ?: 0.0);
 
         $effectiveResellerBalance = $resellerBalance - $pendingCost;
@@ -309,7 +311,7 @@ if ($route === '/orders/place') {
         if (!in_array($dbOrderStatus, ['pending', 'processing', 'inprogress', 'in_progress'])) {
             $newResellerBalance = $resellerBalance - $resellerCostEtb;
             $stmt = $pdo->prepare("UPDATE settings SET setting_value = :val WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id");
-            $stmt->execute(['val' => (string)$newResellerBalance, 'bot_id' => $adminBotId]);
+            $stmt->execute(['val' => (string)$newResellerBalance, 'bot_id' => $botId]);
         }
 
         $pdo->commit();
@@ -390,7 +392,7 @@ if ($route === '/orders/status') {
 
     try {
         $stmt = $pdo->prepare("
-            SELECT id, api_order_id, cost, quantity, status, reseller_cost 
+            SELECT id, api_order_id, cost, quantity, status, reseller_cost, bot_id 
             FROM orders 
             WHERE user_id = :user_id AND status IN ('pending', 'in_progress', 'processing')
         ");
@@ -473,16 +475,16 @@ if ($route === '/orders/status') {
                                 try {
                                     // Fetch current reseller_balance safely
                                     $stmtGet = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id LIMIT 1");
-                                    $stmtGet->execute(['bot_id' => $adminBotId]);
+                                    $stmtGet->execute(['bot_id' => $order['bot_id']]);
                                     $currentResellerBal = (float)($stmtGet->fetchColumn() ?: 0.0);
 
                                     $newResellerBal = $currentResellerBal - $deduction;
 
                                     // Update reseller_balance setting
                                     $stmtDeduct = $pdo->prepare("UPDATE settings SET setting_value = :val WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id");
-                                    $stmtDeduct->execute(['val' => (string)$newResellerBal, 'bot_id' => $adminBotId]);
+                                    $stmtDeduct->execute(['val' => (string)$newResellerBal, 'bot_id' => $order['bot_id']]);
                                 } catch (Exception $e) {
-                                    error_log("RESELLER BALANCE DEDUCTION FAILED: " . $e->getMessage());
+                                    error_log("RESELLER BALANCE DEDUCTION FAILED FOR BOT " . $order['bot_id'] . ": " . $e->getMessage());
                                 }
                             }
                         }
