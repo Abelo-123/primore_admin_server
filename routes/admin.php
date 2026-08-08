@@ -126,8 +126,7 @@ if ($route === '/admin/login' && $method === 'POST') {
 if (
     $route !== '/admin/login' && 
     $route !== '/admin/reseller/deposit/callback' && 
-    $route !== '/admin/reseller/deposit/public-status' &&
-    $route !== '/admin/reseller/deposit/test-inspect'
+    $route !== '/admin/reseller/deposit/public-status'
 ) {
     $effective = getEffectiveAdminPassword();
     if (empty($providedPass) || $providedPass !== $effective) {
@@ -1678,26 +1677,6 @@ if ($route === '/admin/reseller/deposit/test-init' && $method === 'GET') {
     exit;
 }
 
-
-// ─── ROUTE: /admin/reseller/deposit/test-inspect (GET) ───────────────
-if ($route === '/admin/reseller/deposit/test-inspect' && $method === 'GET') {
-    try {
-        $stmt = $pdo->query("SELECT * FROM orders ORDER BY id DESC LIMIT 5");
-        $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        $stmt2 = $pdo->query("SELECT * FROM settings WHERE setting_key = 'reseller_balance'");
-        $balRows = $stmt2->fetchAll(PDO::FETCH_ASSOC);
-        
-        echo json_encode([
-            'success' => true,
-            'reseller_balance_settings' => $balRows,
-            'last_orders' => $orders
-        ]);
-    } catch (Exception $e) {
-        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
-    }
-    exit;
-}
 
 
 // ─── ROUTE: /admin/reseller/deposit/init (POST) ──────────────────────

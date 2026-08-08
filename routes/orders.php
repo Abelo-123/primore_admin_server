@@ -308,8 +308,8 @@ if ($route === '/orders/place') {
         // 8.5. Deduct reseller balance ONLY if status is already completed
         if (!in_array($dbOrderStatus, ['pending', 'processing', 'inprogress', 'in_progress'])) {
             $newResellerBalance = $resellerBalance - $resellerCostEtb;
-            $stmt = $pdo->prepare("UPDATE settings SET setting_value = :val WHERE setting_key = 'reseller_balance'");
-            $stmt->execute(['val' => (string)$newResellerBalance]);
+            $stmt = $pdo->prepare("UPDATE settings SET setting_value = :val WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id");
+            $stmt->execute(['val' => (string)$newResellerBalance, 'bot_id' => $adminBotId]);
         }
 
         $pdo->commit();
@@ -471,8 +471,8 @@ if ($route === '/orders/status') {
 
                             if ($deduction > 0) {
                                 try {
-                                    $stmtDeduct = $pdo->prepare("UPDATE settings SET setting_value = CAST(setting_value AS DECIMAL(15,4)) - :deduction WHERE setting_key = 'reseller_balance'");
-                                    $stmtDeduct->execute(['deduction' => $deduction]);
+                                    $stmtDeduct = $pdo->prepare("UPDATE settings SET setting_value = CAST(setting_value AS DECIMAL(15,4)) - :deduction WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id");
+                                    $stmtDeduct->execute(['deduction' => $deduction, 'bot_id' => $adminBotId]);
                                 } catch (Exception $e) {}
                             }
                         }
