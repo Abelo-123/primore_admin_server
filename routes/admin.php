@@ -1853,6 +1853,16 @@ if ($route === '/admin/reseller/deposit/callback') {
             // Update reseller_balance setting
             $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('reseller_balance', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
             $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newBalance, 'val_up' => (string)$newBalance]);
+
+            // Fetch and update total_deposit setting
+            $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'total_deposit' AND bot_id = :bot_id LIMIT 1");
+            $stmt->execute(['bot_id' => $adminBotId]);
+            $tdRow = $stmt->fetch();
+            $currentTotalDeposit = $tdRow ? (float)$tdRow['setting_value'] : 0.0;
+            $newTotalDeposit = $currentTotalDeposit + $verifiedAmount;
+
+            $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('total_deposit', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
+            $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newTotalDeposit, 'val_up' => (string)$newTotalDeposit]);
             
             $pdo->commit();
             echo json_encode(['success' => true, 'message' => 'Deposit credited successfully', 'reseller_balance' => $newBalance]);
@@ -1948,6 +1958,16 @@ if ($route === '/admin/reseller/deposit/verify' && ($method === 'POST' || $metho
             // Update reseller_balance setting
             $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('reseller_balance', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
             $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newBalance, 'val_up' => (string)$newBalance]);
+
+            // Fetch and update total_deposit setting
+            $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'total_deposit' AND bot_id = :bot_id LIMIT 1");
+            $stmt->execute(['bot_id' => $adminBotId]);
+            $tdRow = $stmt->fetch();
+            $currentTotalDeposit = $tdRow ? (float)$tdRow['setting_value'] : 0.0;
+            $newTotalDeposit = $currentTotalDeposit + $verifiedAmount;
+
+            $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('total_deposit', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
+            $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newTotalDeposit, 'val_up' => (string)$newTotalDeposit]);
             
             $pdo->commit();
             
