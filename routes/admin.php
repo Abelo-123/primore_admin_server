@@ -1705,7 +1705,8 @@ if ($route === '/admin/reseller/deposit/init' && $method === 'POST') {
         global $chapaSecretKey, $chapaBaseUrl, $siteUrl;
         $baseUrl = (strpos($siteUrl, 'http') === 0) ? $siteUrl : "https://{$siteUrl}";
         $chapaCallbackUrl = "{$baseUrl}/api/admin/reseller/deposit/callback";
-        $chapaReturnUrl = "{$baseUrl}/api/admin/reseller/deposit/callback?tx_ref={$txRef}";
+        
+        $chapaReturnUrl = isset($requestData['return_url']) ? $requestData['return_url'] : "{$baseUrl}/api/admin/reseller/deposit/callback?tx_ref={$txRef}";
         
         $payload = [
             'amount'        => $amount,
