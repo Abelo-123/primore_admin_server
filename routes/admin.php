@@ -127,7 +127,7 @@ if (
     $route !== '/admin/login' && 
     $route !== '/admin/reseller/deposit/callback' && 
     $route !== '/admin/reseller/deposit/public-status' &&
-    $route !== '/admin/reseller/deposit/test-inspect'
+    $route !== '/admin/reseller/withdrawal/callback'
 ) {
     $effective = getEffectiveAdminPassword();
     if (empty($providedPass) || $providedPass !== $effective) {
@@ -1679,26 +1679,6 @@ if ($route === '/admin/reseller/deposit/test-init' && $method === 'GET') {
 }
 
 
-// ─── ROUTE: /admin/reseller/deposit/test-inspect (GET) ───────────────
-if ($route === '/admin/reseller/deposit/test-inspect' && $method === 'GET') {
-    try {
-        $stmt = $pdo->query("SELECT * FROM deposits ORDER BY id DESC LIMIT 5");
-        $deposits = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        $stmt2 = $pdo->query("SELECT * FROM settings WHERE setting_key = 'total_deposit'");
-        $totRows = $stmt2->fetchAll(PDO::FETCH_ASSOC);
-        
-        echo json_encode([
-            'success' => true,
-            'total_deposit_settings' => $totRows,
-            'last_deposits' => $deposits
-        ]);
-    } catch (Exception $e) {
-        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
-    }
-    exit;
-}
-
 
 
 // ─── ROUTE: /admin/reseller/deposit/init (POST) ──────────────────────
@@ -2121,6 +2101,11 @@ if ($route === '/admin/reseller/withdraw-deposit' && $method === 'POST') {
             $joadminUrl = getEnvVar('JOADMIN_SERVER_URL', 'https://padmin121.onrender.com');
             $joadminApiKey = getEnvVar('JOADMIN_API_KEY');
             $resellerId = getEnvVar('RESELLER_ID', 'primore');
+            global $siteUrl;
+            
+            // Construct callback URL
+            $baseUrl = (strpos($siteUrl, 'http') === 0) ? $siteUrl : "https://{$siteUrl}";
+            $callbackUrl = "{$baseUrl}/api/admin/reseller/withdrawal/callback";
             
             $payload = [
                 'reseller_id'    => $resellerId,
@@ -2128,7 +2113,8 @@ if ($route === '/admin/reseller/withdraw-deposit' && $method === 'POST') {
                 'amount'         => $amount,
                 'bank_name'      => $bankName,
                 'account_number' => $accountNumber,
-                'account_name'   => $accountName
+                'account_name'   => $accountName,
+                'callback_url'   => $callbackUrl
             ];
             
             $headers = [
@@ -2243,6 +2229,74 @@ if ($route === '/admin/reseller/deposit/history' && $method === 'GET') {
             'deposits' => $rows
         ]);
     } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+
+// ─── ROUTE: /admin/reseller/withdrawal/callback (POST) ───────────────
+if ($route === '/admin/reseller/withdrawal/callback' && $method === 'POST') {
+    $providedKey = isset($_SERVER['HTTP_X_API_KEY']) ? $_SERVER['HTTP_X_API_KEY'] : '';
+    global $gopApiKey;
+    $expectedKey = getEnvVar('GODOFPANEL_API_KEY', $gopApiKey);
+    
+    if (empty($expectedKey) || $providedKey !== $expectedKey) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Unauthorized']);
+        exit;
+    }
+    
+    $localId = isset($requestData['local_id']) ? (int)$requestData['local_id'] : 0;
+    $amount = isset($requestData['amount']) ? (float)$requestData['amount'] : 0.0;
+    
+    if (!$localId || $amount <= 0) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Invalid parameters']);
+        exit;
+    }
+    
+    $pdo->beginTransaction();
+    try {
+        // Fetch request
+        $stmt = $pdo->prepare("SELECT * FROM admin_withdrawals WHERE id = :id FOR UPDATE");
+        $stmt->execute(['id' => $localId]);
+        $req = $stmt->fetch();
+        
+        if (!$req) {
+            $pdo->rollBack();
+            echo json_encode(['success' => false, 'error' => 'Withdrawal request not found']);
+            exit;
+        }
+        
+        if ($req['status'] === 'success') {
+            $pdo->rollBack();
+            echo json_encode(['success' => true, 'message' => 'Already processed']);
+            exit;
+        }
+        
+        // Update status to success
+        $stmt = $pdo->prepare("UPDATE admin_withdrawals SET status = 'success', sent_at = NOW() WHERE id = :id");
+        $stmt->execute(['id' => $localId]);
+        
+        // Decrease total_deposit setting in settings table scoped by bot_id
+        global $adminBotId;
+        $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'total_deposit' AND bot_id = :bot_id LIMIT 1");
+        $stmt->execute(['bot_id' => $adminBotId]);
+        $currentTotal = (float)($stmt->fetchColumn() ?: 0.0);
+        
+        $newTotal = max(0.0, $currentTotal - $amount);
+        
+        $stmt = $pdo->prepare("UPDATE settings SET setting_value = :val WHERE setting_key = 'total_deposit' AND bot_id = :bot_id");
+        $stmt->execute(['val' => (string)$newTotal, 'bot_id' => $adminBotId]);
+        
+        $pdo->commit();
+        echo json_encode(['success' => true, 'message' => 'Withdrawal completed, total deposit decreased']);
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         http_response_code(500);
         echo json_encode(['success' => false, 'error' => $e->getMessage()]);
     }
