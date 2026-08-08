@@ -131,6 +131,8 @@ router.post('/init', async (req, res) => {
             meta: { hide_receipt: true },
         };
 
+        console.log('[Chapa Init] Payload:', JSON.stringify(chapaPayload, null, 2));
+
         const chapaRes = await fetch(`${chapaBaseUrl}/transaction/initialize`, {
             method: 'POST',
             headers: {
@@ -139,11 +141,15 @@ router.post('/init', async (req, res) => {
             },
             body: JSON.stringify(chapaPayload),
         });
+        
         const chapaData = await chapaRes.json().catch(() => null);
+        console.log('[Chapa Init] Status:', chapaRes.status);
+        console.log('[Chapa Init] Response:', JSON.stringify(chapaData, null, 2));
+
         const result = {
             success: chapaRes.status === 200 && (chapaData?.status ?? '') === 'success',
             data: chapaData?.data ?? {},
-            message: chapaData?.message ?? 'Unknown error',
+            message: chapaData?.message ?? (chapaData?.error ?? 'Unknown error'),
         };
 
         if (result.success && result.data?.checkout_url) {
@@ -159,9 +165,10 @@ router.post('/init', async (req, res) => {
         } else {
             // Clean up failed record
             await pool.execute('DELETE FROM reseller_deposits WHERE tx_ref = ?', [txRef]);
-            return res.status(500).json({
+            const errorMsg = chapaData?.message || result.message || 'Failed to initialize Chapa payment';
+            return res.status(400).json({
                 success: false,
-                error: result.message || 'Failed to initialize Chapa payment',
+                error: `Chapa Error: ${errorMsg}`,
             });
         }
     } catch (err) {
