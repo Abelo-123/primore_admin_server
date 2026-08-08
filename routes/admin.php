@@ -2072,22 +2072,16 @@ if ($route === '/admin/reseller/withdraw-deposit' && $method === 'POST') {
             $settings[$r['setting_key']] = $r['setting_value'];
         }
         
-        $balance = isset($settings['reseller_balance']) ? (float)$settings['reseller_balance'] : 0.0;
         $totalDeposit = isset($settings['total_deposit']) ? (float)$settings['total_deposit'] : 0.0;
         
-        if ($balance < $amount) {
+        if ($totalDeposit < $amount) {
             http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'Insufficient reseller balance']);
+            echo json_encode(['success' => false, 'error' => 'Insufficient withdrawable balance (Total Deposit too low)']);
             exit;
         }
         
-        $newBalance = $balance - $amount;
-        
         $pdo->beginTransaction();
         try {
-            // Deduct reseller balance
-            $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('reseller_balance', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
-            $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newBalance, 'val_up' => (string)$newBalance]);
             
             // Insert into admin_withdrawals
             $stmt = $pdo->prepare("INSERT INTO admin_withdrawals (amount, bank_name, account_number, account_name, status) VALUES (:amount, :bank, :acc, :name, 'pending')");
