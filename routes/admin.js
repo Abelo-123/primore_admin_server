@@ -17,7 +17,7 @@ const router = Router();
 const botToken = process.env.BOT_TOKEN || '';
 const adminBotId = botToken ? botToken.split(':')[0] : '8731737556';
 const JOADMIN_SERVER_URL = process.env.JOADMIN_SERVER_URL || 'https://padmin121.onrender.com';
-const JOADMIN_API_KEY = process.env.GODOFPANEL_API_KEY || '';
+const JOADMIN_API_KEY = process.env.JOADMIN_API_KEY || process.env.GODOFPANEL_API_KEY || '';
 const RESELLER_ID = process.env.RESELLER_ID || 'primore';
 const PRIMORA_SERVER_URL = process.env.SITE_URL || 'https://primore-admin-server.onrender.com';
 
@@ -563,7 +563,7 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
         });
     } catch (err) {
         console.error('[admin/reseller/withdraw-deposit]', err);
-        return res.status(500).json({ error: 'Failed to process withdrawal' });
+        return res.status(500).json({ error: 'Failed to process withdrawal: ' + err.message });
     }
 });
 

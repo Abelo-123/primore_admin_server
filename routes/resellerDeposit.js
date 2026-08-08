@@ -22,7 +22,7 @@ const router = Router();
 const botToken = process.env.BOT_TOKEN || '';
 const adminBotId = botToken ? botToken.split(':')[0] : '';
 const JOADMIN_SERVER_URL = process.env.JOADMIN_SERVER_URL || 'https://padmin121.onrender.com';
-const JOADMIN_API_KEY = process.env.GODOFPANEL_API_KEY || '';
+const JOADMIN_API_KEY = process.env.JOADMIN_API_KEY || process.env.GODOFPANEL_API_KEY || '';
 const RESELLER_ID = process.env.RESELLER_ID || 'primore';
 const SITE_URL = process.env.SITE_URL || 'https://primore-admin-server.onrender.com';
 
