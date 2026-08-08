@@ -1746,8 +1746,22 @@ if ($route === '/admin/reseller/deposit/init' && $method === 'POST') {
             $stmt->execute(['tx_ref' => $txRef]);
             
             http_response_code(400);
-            $errMsg = isset($chapaData['message']) ? $chapaData['message'] : 'Failed to initialize Chapa payment';
-            echo json_encode(['success' => false, 'error' => "Chapa Error: {$errMsg}"]);
+            $errMsg = 'Failed to initialize Chapa payment';
+            if (isset($chapaData['message'])) {
+                if (is_array($chapaData['message'])) {
+                    $errMsg = json_encode($chapaData['message']);
+                } else {
+                    $errMsg = (string)$chapaData['message'];
+                }
+            }
+            if (empty($errMsg) && isset($chapaData['error'])) {
+                $errMsg = is_array($chapaData['error']) ? json_encode($chapaData['error']) : (string)$chapaData['error'];
+            }
+            echo json_encode([
+                'success' => false, 
+                'error' => "Chapa Error: {$errMsg}", 
+                'debug' => isset($res['body']) ? $res['body'] : ''
+            ]);
         }
     } catch (Exception $e) {
         http_response_code(500);
