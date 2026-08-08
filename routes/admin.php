@@ -1799,16 +1799,20 @@ if ($route === '/admin/reseller/deposit/callback') {
     }
     
     try {
-        $stmt = $pdo->prepare('SELECT status, amount FROM reseller_deposits WHERE tx_ref = :tx_ref');
+        $pdo->beginTransaction();
+        
+        $stmt = $pdo->prepare('SELECT status, amount FROM reseller_deposits WHERE tx_ref = :tx_ref FOR UPDATE');
         $stmt->execute(['tx_ref' => $txRef]);
         $depositCheck = $stmt->fetch();
         
         if (!$depositCheck) {
+            $pdo->rollBack();
             echo json_encode(['success' => false, 'message' => 'Deposit not found']);
             exit;
         }
         
         if ($depositCheck['status'] === 'success') {
+            $pdo->rollBack();
             echo json_encode(['success' => true, 'message' => 'Already processed']);
             exit;
         }
@@ -1830,50 +1834,48 @@ if ($route === '/admin/reseller/deposit/callback') {
             $chapaRef = isset($verifyData['data']['reference']) ? $verifyData['data']['reference'] : '';
             $responseJson = json_encode($verifyData);
             
-            $pdo->beginTransaction();
-            try {
-                // Update reseller deposit status
-                $stmt = $pdo->prepare("UPDATE reseller_deposits SET status = 'success', chapa_tx_ref = :chapa_ref, chapa_response = :resp, completed_at = NOW() WHERE tx_ref = :tx_ref");
-                $stmt->execute(['chapa_ref' => $chapaRef, 'resp' => $responseJson, 'tx_ref' => $txRef]);
-                
-                // Fetch current metrics (reseller_balance, total_deposit) from settings
-                global $adminBotId;
-                $stmt = $pdo->prepare("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('reseller_balance', 'total_deposit') AND bot_id = :bot_id");
-                $stmt->execute(['bot_id' => $adminBotId]);
-                $rows = $stmt->fetchAll();
-                $settings = [];
-                foreach ($rows as $r) {
-                    $settings[$r['setting_key']] = $r['setting_value'];
-                }
-                
-                $currentBalance = isset($settings['reseller_balance']) ? (float)$settings['reseller_balance'] : 0.0;
-                $currentTotalDeposit = isset($settings['total_deposit']) ? (float)$settings['total_deposit'] : 0.0;
-                
-                $newBalance = $currentBalance + $verifiedAmount;
-                $newTotalDeposit = $currentTotalDeposit + $verifiedAmount;
-                
-                // Update settings
-                $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('reseller_balance', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
-                $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newBalance, 'val_up' => (string)$newBalance]);
-                
-                $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('total_deposit', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
-                $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newTotalDeposit, 'val_up' => (string)$newTotalDeposit]);
-                
-                $pdo->commit();
-                echo json_encode(['success' => true, 'message' => 'Deposit credited successfully', 'reseller_balance' => $newBalance]);
-            } catch (Exception $txErr) {
-                $pdo->rollBack();
-                throw $txErr;
+            // Update reseller deposit status
+            $stmt = $pdo->prepare("UPDATE reseller_deposits SET status = 'success', chapa_tx_ref = :chapa_ref, chapa_response = :resp, completed_at = NOW() WHERE tx_ref = :tx_ref");
+            $stmt->execute(['chapa_ref' => $chapaRef, 'resp' => $responseJson, 'tx_ref' => $txRef]);
+            
+            // Fetch current metrics (reseller_balance, total_deposit) from settings
+            global $adminBotId;
+            $stmt = $pdo->prepare("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('reseller_balance', 'total_deposit') AND bot_id = :bot_id");
+            $stmt->execute(['bot_id' => $adminBotId]);
+            $rows = $stmt->fetchAll();
+            $settings = [];
+            foreach ($rows as $r) {
+                $settings[$r['setting_key']] = $r['setting_value'];
             }
+            
+            $currentBalance = isset($settings['reseller_balance']) ? (float)$settings['reseller_balance'] : 0.0;
+            $currentTotalDeposit = isset($settings['total_deposit']) ? (float)$settings['total_deposit'] : 0.0;
+            
+            $newBalance = $currentBalance + $verifiedAmount;
+            $newTotalDeposit = $currentTotalDeposit + $verifiedAmount;
+            
+            // Update settings
+            $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('reseller_balance', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
+            $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newBalance, 'val_up' => (string)$newBalance]);
+            
+            $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('total_deposit', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
+            $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newTotalDeposit, 'val_up' => (string)$newTotalDeposit]);
+            
+            $pdo->commit();
+            echo json_encode(['success' => true, 'message' => 'Deposit credited successfully', 'reseller_balance' => $newBalance]);
         } else {
             $realStatus = isset($verifyData['data']['status']) ? $verifyData['data']['status'] : 'pending';
             if (strtolower($realStatus) === 'failed') {
                 $stmt = $pdo->prepare("UPDATE reseller_deposits SET status = 'failed' WHERE tx_ref = :tx_ref");
                 $stmt->execute(['tx_ref' => $txRef]);
             }
+            $pdo->commit();
             echo json_encode(['success' => false, 'message' => 'Payment verification pending or failed']);
         }
     } catch (Exception $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         echo json_encode(['success' => false, 'message' => 'System error: ' . $e->getMessage()]);
     }
     exit;
@@ -1891,11 +1893,14 @@ if ($route === '/admin/reseller/deposit/verify' && $method === 'GET') {
     }
     
     try {
-        $stmt = $pdo->prepare('SELECT status, amount FROM reseller_deposits WHERE tx_ref = :tx_ref');
+        $pdo->beginTransaction();
+        
+        $stmt = $pdo->prepare('SELECT status, amount FROM reseller_deposits WHERE tx_ref = :tx_ref FOR UPDATE');
         $stmt->execute(['tx_ref' => $txRef]);
         $depositCheck = $stmt->fetch();
         
         if (!$depositCheck) {
+            $pdo->rollBack();
             echo json_encode(['success' => false, 'message' => 'Deposit record not found']);
             exit;
         }
@@ -1908,6 +1913,7 @@ if ($route === '/admin/reseller/deposit/verify' && $method === 'GET') {
         $resellerBalance = $sRow ? (float)$sRow['setting_value'] : 0.0;
         
         if ($depositCheck['status'] === 'success') {
+            $pdo->rollBack();
             echo json_encode([
                 'success'           => true,
                 'reseller_balance'  => $resellerBalance,
@@ -1933,50 +1939,48 @@ if ($route === '/admin/reseller/deposit/verify' && $method === 'GET') {
             $chapaRef = isset($verifyData['data']['reference']) ? $verifyData['data']['reference'] : '';
             $responseJson = json_encode($verifyData);
             
-            $pdo->beginTransaction();
-            try {
-                // Update status
-                $stmt = $pdo->prepare("UPDATE reseller_deposits SET status = 'success', chapa_tx_ref = :chapa_ref, chapa_response = :resp, completed_at = NOW() WHERE tx_ref = :tx_ref");
-                $stmt->execute(['chapa_ref' => $chapaRef, 'resp' => $responseJson, 'tx_ref' => $txRef]);
-                
-                // Fetch settings
-                $stmt = $pdo->prepare("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('reseller_balance', 'total_deposit') AND bot_id = :bot_id");
-                $stmt->execute(['bot_id' => $adminBotId]);
-                $rows = $stmt->fetchAll();
-                $settings = [];
-                foreach ($rows as $r) {
-                    $settings[$r['setting_key']] = $r['setting_value'];
-                }
-                
-                $currentBalance = isset($settings['reseller_balance']) ? (float)$settings['reseller_balance'] : 0.0;
-                $currentTotalDeposit = isset($settings['total_deposit']) ? (float)$settings['total_deposit'] : 0.0;
-                
-                $newBalance = $currentBalance + $verifiedAmount;
-                $newTotalDeposit = $currentTotalDeposit + $verifiedAmount;
-                
-                // Update
-                $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('reseller_balance', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
-                $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newBalance, 'val_up' => (string)$newBalance]);
-                
-                $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('total_deposit', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
-                $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newTotalDeposit, 'val_up' => (string)$newTotalDeposit]);
-                
-                $pdo->commit();
-                
-                echo json_encode([
-                    'success'           => true,
-                    'reseller_balance'  => $newBalance,
-                    'message'           => 'Payment verified and balance updated!'
-                ]);
-            } catch (Exception $txErr) {
-                $pdo->rollBack();
-                throw $txErr;
+            // Update status
+            $stmt = $pdo->prepare("UPDATE reseller_deposits SET status = 'success', chapa_tx_ref = :chapa_ref, chapa_response = :resp, completed_at = NOW() WHERE tx_ref = :tx_ref");
+            $stmt->execute(['chapa_ref' => $chapaRef, 'resp' => $responseJson, 'tx_ref' => $txRef]);
+            
+            // Fetch settings
+            $stmt = $pdo->prepare("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('reseller_balance', 'total_deposit') AND bot_id = :bot_id");
+            $stmt->execute(['bot_id' => $adminBotId]);
+            $rows = $stmt->fetchAll();
+            $settings = [];
+            foreach ($rows as $r) {
+                $settings[$r['setting_key']] = $r['setting_value'];
             }
+            
+            $currentBalance = isset($settings['reseller_balance']) ? (float)$settings['reseller_balance'] : 0.0;
+            $currentTotalDeposit = isset($settings['total_deposit']) ? (float)$settings['total_deposit'] : 0.0;
+            
+            $newBalance = $currentBalance + $verifiedAmount;
+            $newTotalDeposit = $currentTotalDeposit + $verifiedAmount;
+            
+            // Update
+            $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('reseller_balance', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
+            $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newBalance, 'val_up' => (string)$newBalance]);
+            
+            $stmt = $pdo->prepare("INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ('total_deposit', :bot_id, :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
+            $stmt->execute(['bot_id' => $adminBotId, 'val' => (string)$newTotalDeposit, 'val_up' => (string)$newTotalDeposit]);
+            
+            $pdo->commit();
+            
+            echo json_encode([
+                'success'           => true,
+                'reseller_balance'  => $newBalance,
+                'message'           => 'Payment verified and balance updated!'
+            ]);
         } else {
             $isFailed = ($chapaStatus === 'failed' || strpos($chapaStatus, 'reject') !== false || strpos($chapaStatus, 'cancel') !== false);
             if ($isFailed) {
                 $stmt = $pdo->prepare("UPDATE reseller_deposits SET status = 'failed' WHERE tx_ref = :tx_ref");
                 $stmt->execute(['tx_ref' => $txRef]);
+            }
+            $pdo->commit();
+            
+            if ($isFailed) {
                 echo json_encode([
                     'success' => false,
                     'message' => 'failed',
@@ -1991,6 +1995,9 @@ if ($route === '/admin/reseller/deposit/verify' && $method === 'GET') {
             }
         }
     } catch (Exception $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         echo json_encode(['success' => false, 'message' => 'error', 'error' => 'Verification error: ' . $e->getMessage()]);
     }
     exit;
