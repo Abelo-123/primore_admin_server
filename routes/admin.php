@@ -1717,7 +1717,7 @@ if ($route === '/admin/reseller/deposit/init' && $method === 'POST') {
             'callback_url'  => $chapaCallbackUrl,
             'return_url'    => $chapaReturnUrl,
             'customization' => [
-                'title'       => 'Primore Reseller Top-up',
+                'title'       => 'Primore Topup',
                 'description' => 'Admin balance deposit'
             ]
         ];
