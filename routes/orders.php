@@ -207,7 +207,7 @@ if ($route === '/orders/place') {
             }
         }
 
-        $totalCostEtb = (float)number_format($finalRateEtb * ($quantity / 1000), 2, '.', '');
+        $totalCostEtb = max(0.01, (float)number_format($finalRateEtb * ($quantity / 1000), 2, '.', ''));
 
         if ((float)$user['balance'] < $totalCostEtb) {
             $pdo->rollBack();
@@ -216,7 +216,7 @@ if ($route === '/orders/place') {
         }
 
         // Calculate wholesale reseller cost (cost to Primora)
-        $resellerCostEtb = (float)number_format($baseRateEtb * ($quantity / 1000), 2, '.', '');
+        $resellerCostEtb = max(0.01, (float)number_format($baseRateEtb * ($quantity / 1000), 2, '.', ''));
 
         // Fetch reseller_balance from settings
         $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'reseller_balance' LIMIT 1");
