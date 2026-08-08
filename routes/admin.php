@@ -58,6 +58,7 @@ try {
     try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN btn_text VARCHAR(255) DEFAULT 'Open App 🎵'"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlifyapp/'"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE broadcast_messages ADD COLUMN custom_message TEXT DEFAULT NULL"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE orders ADD COLUMN service_name VARCHAR(255) DEFAULT NULL"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE broadcasts ADD COLUMN bot_id VARCHAR(50) DEFAULT NULL"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE broadcast_messages ADD COLUMN bot_id VARCHAR(50) DEFAULT NULL"); } catch (Exception $e) {}
 } catch (PDOException $e) {
