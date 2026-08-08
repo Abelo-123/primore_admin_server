@@ -62,8 +62,12 @@ function requireAdmin(publicPaths = []) {
     };
 }
 
-// Apply admin auth (skip callback and public-status)
-router.use(requireAdmin(['/callback', '/public-status']));
+// Apply admin auth (skip callback, public-status, and test-init)
+router.use(requireAdmin(['/callback', '/public-status', '/test-init']));
+
+router.get('/test-init', (req, res) => {
+    return res.json({ success: true, message: "Reseller deposit router is fully active!" });
+});
 
 // ─── Ensure reseller_deposits table exists ─────────────────────────
 async function ensureTable() {
