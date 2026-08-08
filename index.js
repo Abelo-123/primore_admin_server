@@ -17,6 +17,7 @@ import appRouter from './routes/app.js';
 import chatRouter from './routes/chat.js';
 import getCategoriesRouter from './routes/getCategories.js';
 import adminRouter from './routes/admin.js';
+import resellerDepositRouter from './routes/resellerDeposit.js';
 import pool from './config/database.js';
 import testNotifyRouter from './routes/testNotify.js';
 
@@ -139,6 +140,36 @@ const app = express();
                 console.log('[Startup] Added reference_type column to transactions table');
             } catch (e) {}
             console.log('[Startup] Transactions table checked/ready.');
+            // Ensure reseller_deposits table exists
+            await conn.execute(`
+                CREATE TABLE IF NOT EXISTS reseller_deposits (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    amount DECIMAL(10, 2) NOT NULL,
+                    tx_ref VARCHAR(255) NOT NULL UNIQUE,
+                    status VARCHAR(50) DEFAULT 'pending',
+                    chapa_tx_ref VARCHAR(255),
+                    chapa_response TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    completed_at DATETIME
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            `);
+
+            // Ensure admin_withdrawals table has required columns
+            await conn.execute(`
+                CREATE TABLE IF NOT EXISTS admin_withdrawals (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    amount DECIMAL(10, 2) NOT NULL,
+                    bank_name VARCHAR(255) NOT NULL,
+                    account_number VARCHAR(255) NOT NULL,
+                    account_name VARCHAR(255),
+                    status VARCHAR(50) DEFAULT 'pending',
+                    joadmin_request_id INT DEFAULT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            `);
+            try { await conn.execute("ALTER TABLE admin_withdrawals ADD COLUMN status VARCHAR(50) DEFAULT 'pending'"); } catch (e) {}
+            try { await conn.execute('ALTER TABLE admin_withdrawals ADD COLUMN joadmin_request_id INT DEFAULT NULL'); } catch (e) {}
+
         } finally {
             conn.release();
         }
@@ -227,6 +258,7 @@ app.use('/api/app', appRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/categories', getCategoriesRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/admin/reseller/deposit', resellerDepositRouter);
 app.use('/api/test', testNotifyRouter);
 
 // Start server

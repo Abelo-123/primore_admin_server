@@ -68,24 +68,30 @@ async function handleCallback(req, res) {
                 [chapaRef, responseJson, deposit.id]
             );
 
-            // Credit balance
+            // Credit user balance (scoped to bot_id)
             await conn.execute(
-                'UPDATE auth SET balance = balance + ?, last_deposit = NOW() WHERE tg_id = ?',
-                [verifiedAmount, deposit.user_id]
+                'UPDATE auth SET balance = balance + ?, last_deposit = NOW() WHERE tg_id = ? AND bot_id = ?',
+                [verifiedAmount, deposit.user_id, deposit.bot_id]
+            );
+
+            // Increment panel total_deposit (money received from users)
+            await conn.execute(
+                'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ("total_deposit", ?, ?) ON DUPLICATE KEY UPDATE setting_value = CAST(setting_value AS DECIMAL(10,2)) + ?',
+                [deposit.bot_id, verifiedAmount.toFixed(2), verifiedAmount]
             );
 
             // Get new balance
             const [balRows] = await conn.execute(
-                'SELECT balance FROM auth WHERE tg_id = ?',
-                [deposit.user_id]
+                'SELECT balance FROM auth WHERE tg_id = ? AND bot_id = ?',
+                [deposit.user_id, deposit.bot_id]
             );
             const newBalance = parseFloat(balRows[0]?.balance) || 0;
 
             // Record transaction
             await conn.execute(
-                `INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, reference_id, description)
-                 VALUES (?, 'deposit', ?, ?, 'deposit', ?, 'Chapa deposit (callback)')`,
-                [deposit.user_id, verifiedAmount, newBalance, deposit.id]
+                `INSERT INTO transactions (user_id, bot_id, type, amount, balance_after, reference_type, reference_id, description)
+                 VALUES (?, ?, 'deposit', ?, ?, 'deposit', ?, 'Chapa deposit (callback)')`,
+                [deposit.user_id, deposit.bot_id, verifiedAmount, newBalance, deposit.id]
             );
 
             await conn.commit();

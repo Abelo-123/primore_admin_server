@@ -16,6 +16,10 @@ const router = Router();
 // Resolve the bot_id (defaulting to the one in the environment BOT_TOKEN)
 const botToken = process.env.BOT_TOKEN || '';
 const adminBotId = botToken ? botToken.split(':')[0] : '8731737556';
+const JOADMIN_SERVER_URL = process.env.JOADMIN_SERVER_URL || 'https://padmin121.onrender.com';
+const JOADMIN_API_KEY = process.env.GODOFPANEL_API_KEY || '';
+const RESELLER_ID = process.env.RESELLER_ID || 'primore';
+const PRIMORA_SERVER_URL = process.env.SITE_URL || 'https://primore-admin-server.onrender.com';
 
 // Helper to get effective admin password (DB override > env)
 async function getEffectiveAdminPassword() {
@@ -35,7 +39,8 @@ async function getEffectiveAdminPassword() {
 
 // Middleware to check admin password auth
 router.use(async (req, res, next) => {
-    if (req.path === '/login') {
+    // Public paths — no auth needed
+    if (req.path === '/login' || req.path === '/reseller/withdrawal/confirm' || req.path === '/reseller/public-status') {
         return next();
     }
 
@@ -480,6 +485,7 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
             return res.status(400).json({ error: 'Bank name and account number are required' });
         }
 
+        // Check total_deposit balance
         const [rows] = await pool.execute(
             'SELECT setting_value FROM settings WHERE setting_key = "total_deposit" AND bot_id = ?',
             [adminBotId]
@@ -492,22 +498,131 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
             });
         }
 
+        // Deduct from total_deposit immediately (reserve it)
         const newTotal = (currentTotal - amount).toFixed(2);
-
         await pool.execute(
             'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ("total_deposit", ?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
             [adminBotId, newTotal, newTotal]
         );
 
-        await pool.execute(
-            'INSERT INTO admin_withdrawals (amount, bank_name, account_number, account_name, status, created_at) VALUES (?, ?, ?, ?, "completed", NOW())',
+        // Ensure admin_withdrawals has status + joadmin_request_id columns
+        try {
+            await pool.execute("ALTER TABLE admin_withdrawals ADD COLUMN status VARCHAR(50) DEFAULT 'pending'");
+        } catch (e) {}
+        try {
+            await pool.execute('ALTER TABLE admin_withdrawals ADD COLUMN joadmin_request_id INT DEFAULT NULL');
+        } catch (e) {}
+
+        // Save withdrawal request locally as 'pending'
+        const [insertResult] = await pool.execute(
+            'INSERT INTO admin_withdrawals (amount, bank_name, account_number, account_name, status, created_at) VALUES (?, ?, ?, ?, "pending", NOW())',
             [amount, bank_name, account_number, account_name || '']
         );
+        const localId = insertResult.insertId;
 
-        return res.json({ success: true, new_total_deposit: parseFloat(newTotal) });
+        // Forward request to joadmin (best effort)
+        let joadminRequestId = null;
+        try {
+            const joadminRes = await fetch(`${JOADMIN_SERVER_URL}/api/admin/reseller/withdrawal-request`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': JOADMIN_API_KEY,
+                },
+                body: JSON.stringify({
+                    reseller_id: RESELLER_ID,
+                    local_id: localId,
+                    amount,
+                    bank_name,
+                    account_number,
+                    account_name: account_name || '',
+                    callback_url: `${PRIMORA_SERVER_URL}/api/admin/reseller/withdrawal/confirm`,
+                }),
+            });
+            if (joadminRes.ok) {
+                const joadminData = await joadminRes.json();
+                joadminRequestId = joadminData.request_id || null;
+                if (joadminRequestId) {
+                    await pool.execute(
+                        'UPDATE admin_withdrawals SET joadmin_request_id = ? WHERE id = ?',
+                        [joadminRequestId, localId]
+                    );
+                }
+            }
+        } catch (e) {
+            console.error('[reseller/withdraw-deposit] Failed to notify joadmin:', e.message);
+        }
+
+        return res.json({
+            success: true,
+            new_total_deposit: parseFloat(newTotal),
+            local_id: localId,
+            joadmin_request_id: joadminRequestId,
+            status: 'pending',
+            message: 'Withdrawal request submitted. Awaiting joadmin confirmation.'
+        });
     } catch (err) {
         console.error('[admin/reseller/withdraw-deposit]', err);
         return res.status(500).json({ error: 'Failed to process withdrawal' });
+    }
+});
+
+// ─── GET /reseller/withdrawal-history — List primora admin withdrawals ──
+router.get('/reseller/withdrawal-history', async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            'SELECT * FROM admin_withdrawals ORDER BY created_at DESC LIMIT 50'
+        );
+        return res.json({ success: true, withdrawals: rows });
+    } catch (err) {
+        console.error('[admin/reseller/withdrawal-history]', err);
+        return res.status(500).json({ error: 'Failed to load withdrawal history' });
+    }
+});
+
+// ─── POST /reseller/withdrawal/confirm — Called BY joadmin when money sent ─
+// No admin auth — protected by API key from joadmin
+router.post('/reseller/withdrawal/confirm', async (req, res) => {
+    try {
+        const providedKey = req.headers['x-api-key'] || req.body?.api_key || '';
+        if (!JOADMIN_API_KEY || providedKey !== JOADMIN_API_KEY) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const { local_id, joadmin_request_id } = req.body;
+        if (!local_id && !joadmin_request_id) {
+            return res.status(400).json({ error: 'local_id or joadmin_request_id required' });
+        }
+
+        let whereClause = 'id = ?';
+        let whereParam = local_id;
+        if (!local_id && joadmin_request_id) {
+            whereClause = 'joadmin_request_id = ?';
+            whereParam = joadmin_request_id;
+        }
+
+        const [rows] = await pool.execute(
+            `SELECT * FROM admin_withdrawals WHERE ${whereClause} LIMIT 1`,
+            [whereParam]
+        );
+        const withdrawal = rows[0];
+        if (!withdrawal) {
+            return res.status(404).json({ error: 'Withdrawal request not found' });
+        }
+        if (withdrawal.status === 'sent') {
+            return res.json({ success: true, message: 'Already confirmed' });
+        }
+
+        await pool.execute(
+            "UPDATE admin_withdrawals SET status = 'sent' WHERE id = ?",
+            [withdrawal.id]
+        );
+
+        console.log(`[reseller/withdrawal/confirm] Withdrawal #${withdrawal.id} (${withdrawal.amount} ETB) marked as sent by joadmin`);
+        return res.json({ success: true, message: 'Withdrawal marked as sent' });
+    } catch (err) {
+        console.error('[admin/reseller/withdrawal/confirm]', err);
+        return res.status(500).json({ error: 'System error' });
     }
 });
 
