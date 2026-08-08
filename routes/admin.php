@@ -1882,8 +1882,8 @@ if ($route === '/admin/reseller/deposit/callback') {
 }
 
 
-// ─── ROUTE: /admin/reseller/deposit/verify (GET) ─────────────────────
-if ($route === '/admin/reseller/deposit/verify' && $method === 'GET') {
+// ─── ROUTE: /admin/reseller/deposit/verify (POST / GET) ──────────────
+if ($route === '/admin/reseller/deposit/verify' && ($method === 'POST' || $method === 'GET')) {
     $txRef = isset($requestData['tx_ref']) ? $requestData['tx_ref'] : null;
     
     if (empty($txRef)) {
