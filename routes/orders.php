@@ -471,9 +471,19 @@ if ($route === '/orders/status') {
 
                             if ($deduction > 0) {
                                 try {
-                                    $stmtDeduct = $pdo->prepare("UPDATE settings SET setting_value = CAST(setting_value AS DECIMAL(15,4)) - :deduction WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id");
-                                    $stmtDeduct->execute(['deduction' => $deduction, 'bot_id' => $adminBotId]);
-                                } catch (Exception $e) {}
+                                    // Fetch current reseller_balance safely
+                                    $stmtGet = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id LIMIT 1");
+                                    $stmtGet->execute(['bot_id' => $adminBotId]);
+                                    $currentResellerBal = (float)($stmtGet->fetchColumn() ?: 0.0);
+
+                                    $newResellerBal = $currentResellerBal - $deduction;
+
+                                    // Update reseller_balance setting
+                                    $stmtDeduct = $pdo->prepare("UPDATE settings SET setting_value = :val WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id");
+                                    $stmtDeduct->execute(['val' => (string)$newResellerBal, 'bot_id' => $adminBotId]);
+                                } catch (Exception $e) {
+                                    error_log("RESELLER BALANCE DEDUCTION FAILED: " . $e->getMessage());
+                                }
                             }
                         }
                     }
