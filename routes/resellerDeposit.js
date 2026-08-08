@@ -117,44 +117,21 @@ router.post('/init', async (req, res) => {
         );
 
         // Initialize Chapa with reseller-specific callback URL
-        const chapaSecretKey = process.env.CHAPA_SECRET_KEY;
-        const chapaBaseUrl = process.env.CHAPA_BASE_URL || 'https://api.chapa.co/v1';
         const chapaCallbackUrl = `${SITE_URL}/api/admin/reseller/deposit/callback`;
         const chapaReturnUrl = `${SITE_URL}/api/admin/reseller/deposit/callback?tx_ref=${txRef}`;
 
-        const chapaPayload = {
+        const chapa = new Chapa();
+        const result = await chapa.initialize({
             amount,
-            currency: 'ETB',
             email: email || 'admin@primore.com',
             first_name: first_name || 'Admin',
             last_name: last_name || '',
             tx_ref: txRef,
             callback_url: chapaCallbackUrl,
-            return_url: chapaReturnUrl,
-            customization: { title: 'Primore Reseller Top-up', description: 'Admin balance deposit' },
-            meta: { hide_receipt: true },
-        };
-
-        console.log('[Chapa Init] Payload:', JSON.stringify(chapaPayload, null, 2));
-
-        const chapaRes = await fetch(`${chapaBaseUrl}/transaction/initialize`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${chapaSecretKey}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(chapaPayload),
+            return_url: chapaReturnUrl
         });
-        
-        const chapaData = await chapaRes.json().catch(() => null);
-        console.log('[Chapa Init] Status:', chapaRes.status);
-        console.log('[Chapa Init] Response:', JSON.stringify(chapaData, null, 2));
 
-        const result = {
-            success: chapaRes.status === 200 && (chapaData?.status ?? '') === 'success',
-            data: chapaData?.data ?? {},
-            message: chapaData?.message ?? (chapaData?.error ?? 'Unknown error'),
-        };
+        console.log('[Chapa Init] Result:', JSON.stringify(result, null, 2));
 
         if (result.success && result.data?.checkout_url) {
             await pool.execute(
@@ -169,7 +146,7 @@ router.post('/init', async (req, res) => {
         } else {
             // Clean up failed record
             await pool.execute('DELETE FROM reseller_deposits WHERE tx_ref = ?', [txRef]);
-            const errorMsg = chapaData?.message || result.message || 'Failed to initialize Chapa payment';
+            const errorMsg = result.message || 'Failed to initialize Chapa payment';
             return res.status(400).json({
                 success: false,
                 error: `Chapa Error: ${errorMsg}`,
