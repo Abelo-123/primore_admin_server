@@ -215,6 +215,21 @@ if ($route === '/orders/place') {
             exit;
         }
 
+        // Calculate wholesale reseller cost (cost to Primora)
+        $resellerCostEtb = (float)number_format($baseRateEtb * ($quantity / 1000), 2, '.', '');
+
+        // Fetch reseller_balance from settings
+        $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'reseller_balance' LIMIT 1");
+        $stmt->execute();
+        $resellerRow = $stmt->fetch();
+        $resellerBalance = $resellerRow ? (float)$resellerRow['setting_value'] : 0.0;
+
+        if ($resellerBalance < $resellerCostEtb) {
+            $pdo->rollBack();
+            echo json_encode(['success' => false, 'error' => 'Insufficient reseller balance on admin panel. Please contact admin.']);
+            exit;
+        }
+
         // 5. Place order to GodOfPanel API
         $orderParams = [
             'key'      => $gopApiKey,
@@ -279,6 +294,11 @@ if ($route === '/orders/place') {
 
         // 8. Deduct user balance
         $newBalance = processTransaction($tgId, 'order', -$totalCostEtb, "Placed Order #{$dbId}", $pdo, 'order', $dbId);
+
+        // 8.5. Deduct reseller balance
+        $newResellerBalance = $resellerBalance - $resellerCostEtb;
+        $stmt = $pdo->prepare("UPDATE settings SET setting_value = :val WHERE setting_key = 'reseller_balance'");
+        $stmt->execute(['val' => (string)$newResellerBalance]);
 
         $pdo->commit();
 
