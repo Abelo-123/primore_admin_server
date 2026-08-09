@@ -17,7 +17,9 @@ const router = Router();
 const botToken = process.env.BOT_TOKEN || '';
 const adminBotId = botToken ? botToken.split(':')[0] : '8731737556';
 const JOADMIN_SERVER_URL = process.env.JOADMIN_SERVER_URL || 'https://padmin121.onrender.com';
-const JOADMIN_API_KEY = process.env.JOADMIN_API_KEY || process.env.GODOFPANEL_API_KEY || '';
+function getJoadminApiKey() {
+    return (process.env.JOADMIN_API_KEY || process.env.GODOFPANEL_API_KEY || '7aed775ad8b88b50a1706db2f35c5eaf').trim();
+}
 const RESELLER_ID = process.env.RESELLER_ID || 'primore';
 const PRIMORA_SERVER_URL = process.env.SITE_URL || 'https://primore-admin-server.onrender.com';
 
@@ -520,14 +522,15 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
         );
         const localId = insertResult.insertId;
 
-        // Forward request to joadmin (best effort)
+        // Forward request to joadmin
         let joadminRequestId = null;
         try {
+            const apiKey = getJoadminApiKey();
             const joadminRes = await fetch(`${JOADMIN_SERVER_URL}/api/admin/reseller/withdrawal-request`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-api-key': JOADMIN_API_KEY,
+                    'x-api-key': apiKey,
                 },
                 body: JSON.stringify({
                     reseller_id: RESELLER_ID,
@@ -548,6 +551,9 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
                         [joadminRequestId, localId]
                     );
                 }
+            } else {
+                const errText = await joadminRes.text();
+                console.error(`[reseller/withdraw-deposit] Joadmin responded with HTTP ${joadminRes.status}: ${errText}`);
             }
         } catch (e) {
             console.error('[reseller/withdraw-deposit] Failed to notify joadmin:', e.message);
@@ -567,9 +573,56 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
     }
 });
 
+// Helper to auto-sync unsynced pending withdrawals to joadmin
+async function syncPendingWithdrawalsWithJoadmin() {
+    try {
+        const [pending] = await pool.execute(
+            "SELECT * FROM admin_withdrawals WHERE status = 'pending' AND (joadmin_request_id IS NULL OR joadmin_request_id = 0)"
+        );
+        for (const w of pending) {
+            try {
+                const apiKey = getJoadminApiKey();
+                const joadminRes = await fetch(`${JOADMIN_SERVER_URL}/api/admin/reseller/withdrawal-request`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': apiKey,
+                    },
+                    body: JSON.stringify({
+                        reseller_id: RESELLER_ID,
+                        local_id: w.id,
+                        amount: w.amount,
+                        bank_name: w.bank_name,
+                        account_number: w.account_number,
+                        account_name: w.account_name || '',
+                        callback_url: `${PRIMORA_SERVER_URL}/api/admin/reseller/withdrawal/confirm`,
+                    }),
+                });
+                if (joadminRes.ok) {
+                    const data = await joadminRes.json();
+                    if (data.request_id) {
+                        await pool.execute(
+                            'UPDATE admin_withdrawals SET joadmin_request_id = ? WHERE id = ?',
+                            [data.request_id, w.id]
+                        );
+                        console.log(`[syncPendingWithdrawals] Synced withdrawal #${w.id} with joadmin request #${data.request_id}`);
+                    }
+                }
+            } catch (err) {
+                console.error(`[syncPendingWithdrawals] Error for #${w.id}:`, err.message);
+            }
+        }
+    } catch (e) {
+        console.error('[syncPendingWithdrawals] Error:', e.message);
+    }
+}
+
 // ─── GET /reseller/withdrawal-history — List primora admin withdrawals ──
 router.get('/reseller/withdrawal-history', async (req, res) => {
     try {
+        // Trigger background sync for any unsynced pending requests
+        syncPendingWithdrawalsWithJoadmin().catch(() => {});
+
         const [rows] = await pool.execute(
             'SELECT * FROM admin_withdrawals ORDER BY created_at DESC LIMIT 50'
         );
@@ -584,8 +637,9 @@ router.get('/reseller/withdrawal-history', async (req, res) => {
 // No admin auth — protected by API key from joadmin
 router.post('/reseller/withdrawal/confirm', async (req, res) => {
     try {
+        const apiKey = getJoadminApiKey();
         const providedKey = req.headers['x-api-key'] || req.body?.api_key || '';
-        if (!JOADMIN_API_KEY || providedKey !== JOADMIN_API_KEY) {
+        if (!apiKey || providedKey.trim() !== apiKey) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
