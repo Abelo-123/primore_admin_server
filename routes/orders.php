@@ -215,8 +215,8 @@ if ($route === '/orders/place') {
             exit;
         }
 
-        // Calculate wholesale reseller cost (cost to Primora)
-        $resellerCostEtb = max(0.01, (float)number_format($baseRateEtb * ($quantity / 1000), 2, '.', ''));
+        // Wholesale reseller cost equals total order charge for the reseller bot
+        $resellerCostEtb = $totalCostEtb;
 
         // Fetch reseller_balance from settings using user's bot_id
         $botId = isset($user['bot_id']) ? $user['bot_id'] : $adminBotId;
