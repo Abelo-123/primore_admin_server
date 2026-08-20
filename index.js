@@ -78,7 +78,7 @@ const app = express();
                     message TEXT NOT NULL,
                     image_url VARCHAR(512) DEFAULT NULL,
                     btn_text VARCHAR(255) DEFAULT 'Open App 🎵',
-                    btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlify.app/',
+                    btn_url VARCHAR(512) DEFAULT 'https://primora-client.onrender.com',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             `);
@@ -100,7 +100,7 @@ const app = express();
 
             // Alter tables to add new columns if they exist
             try { await conn.execute("ALTER TABLE broadcasts ADD COLUMN btn_text VARCHAR(255) DEFAULT 'Open App 🎵'"); } catch (e) {}
-            try { await conn.execute("ALTER TABLE broadcasts ADD COLUMN btn_url VARCHAR(512) DEFAULT 'https://musical-caramel-cae47e.netlify.app/'"); } catch (e) {}
+            try { await conn.execute("ALTER TABLE broadcasts ADD COLUMN btn_url VARCHAR(512) DEFAULT 'https://primora-client.onrender.com'"); } catch (e) {}
             try { await conn.execute("ALTER TABLE broadcast_messages ADD COLUMN custom_message TEXT DEFAULT NULL"); } catch (e) {}
 
             // Ensure custom_description column exists in service_custom

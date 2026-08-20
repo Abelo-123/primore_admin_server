@@ -1031,18 +1031,19 @@ if ($route === '/admin/finance-stats' && $method === 'GET') {
 
 // Helper to send Telegram message in PHP
 function sendTelegramMessagePHP($tgId, $message, $imageUrl) {
-    $token = getEnvVar('CLIENT_BOT_TOKEN');
+    $token = getEnvVar('CLIENT_BOT_TOKEN', '8590320768:AAHwFYYxr5h0_mJdwQ9In14qvL3pquzTEUs');
     if (empty($token)) {
         throw new Exception('CLIENT_BOT_TOKEN is not configured');
     }
 
+    $defaultAppUrl = getEnvVar('MINI_APP_URL', 'https://primora-client.onrender.com');
     $replyMarkup = [
         'inline_keyboard' => [
             [
                 [
                     'text' => 'Open App 🎵',
                     'web_app' => [
-                        'url' => 'https://musical-caramel-cae47e.netlifyapp/'
+                        'url' => $defaultAppUrl
                     ]
                 ]
             ]
@@ -1162,12 +1163,14 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
             }
 
             $tgRes = sendTelegramMessagePHP($target, $personalizedText, $imageUrl);
+            $defaultAppUrl = getEnvVar('MINI_APP_URL', 'https://primora-client.onrender.com');
 
             // Save to broadcasts history so it can be managed
-            $stmtB = $pdo->prepare("INSERT INTO broadcasts (message, image_url, btn_text, btn_url, bot_id, created_at) VALUES (:msg, :img, 'Open App 🎵', 'https://musical-caramel-cae47e.netlifyapp/', :bot_id, NOW())");
+            $stmtB = $pdo->prepare("INSERT INTO broadcasts (message, image_url, btn_text, btn_url, bot_id, created_at) VALUES (:msg, :img, 'Open App 🎵', :btn_u, :bot_id, NOW())");
             $stmtB->execute([
                 'msg' => $message ?: '',
                 'img' => $imageUrl,
+                'btn_u' => $defaultAppUrl,
                 'bot_id' => $botIdHeader
             ]);
             $broadcastId = $pdo->lastInsertId();
@@ -1192,19 +1195,20 @@ if ($route === '/admin/send-telegram' && $method === 'POST') {
 }
 
 // Helper to send broadcast Telegram message (with custom button text/url support)
-function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlifyapp/') {
-    $token = getEnvVar('CLIENT_BOT_TOKEN');
+function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open App 🎵', $btnUrl = null) {
+    $token = getEnvVar('CLIENT_BOT_TOKEN', '8590320768:AAHwFYYxr5h0_mJdwQ9In14qvL3pquzTEUs');
     if (empty($token)) {
         throw new Exception('CLIENT_BOT_TOKEN is not configured');
     }
 
+    $defaultAppUrl = $btnUrl ?: getEnvVar('MINI_APP_URL', 'https://primora-client.onrender.com');
     $replyMarkup = [
         'inline_keyboard' => [
             [
                 [
                     'text' => $btnText ?: 'Open App 🎵',
                     'web_app' => [
-                        'url' => $btnUrl ?: 'https://musical-caramel-cae47e.netlifyapp/'
+                        'url' => $defaultAppUrl
                     ]
                 ]
             ]
@@ -1246,19 +1250,20 @@ function sendBroadcastMessagePHP($tgId, $message, $imageUrl, $btnText = 'Open Ap
 }
 
 // Helper to edit Telegram message text/caption (with custom button text/url support)
-function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null, $btnText = 'Open App 🎵', $btnUrl = 'https://musical-caramel-cae47e.netlifyapp/') {
-    $token = getEnvVar('CLIENT_BOT_TOKEN');
+function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null, $btnText = 'Open App 🎵', $btnUrl = null) {
+    $token = getEnvVar('CLIENT_BOT_TOKEN', '8590320768:AAHwFYYxr5h0_mJdwQ9In14qvL3pquzTEUs');
     if (empty($token)) {
         throw new Exception('CLIENT_BOT_TOKEN is not configured');
     }
 
+    $defaultAppUrl = $btnUrl ?: getEnvVar('MINI_APP_URL', 'https://primora-client.onrender.com');
     $replyMarkup = [
         'inline_keyboard' => [
             [
                 [
                     'text' => $btnText ?: 'Open App 🎵',
                     'web_app' => [
-                        'url' => $btnUrl ?: 'https://musical-caramel-cae47e.netlifyapp/'
+                        'url' => $defaultAppUrl
                     ]
                 ]
             ]
@@ -1298,7 +1303,7 @@ function editTelegramMessagePHP($tgId, $messageId, $newMessage, $imageUrl = null
 
 // Helper to delete Telegram message
 function deleteTelegramMessagePHP($tgId, $messageId) {
-    $token = getEnvVar('CLIENT_BOT_TOKEN');
+    $token = getEnvVar('CLIENT_BOT_TOKEN', '8590320768:AAHwFYYxr5h0_mJdwQ9In14qvL3pquzTEUs');
     if (empty($token)) {
         throw new Exception('CLIENT_BOT_TOKEN is not configured');
     }

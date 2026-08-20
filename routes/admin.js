@@ -978,18 +978,19 @@ router.get('/finance-stats', async (req, res) => {
 
 // Helper to send Telegram message
 async function sendTelegram(tgId, message, imageUrl) {
-    const token = process.env.CLIENT_BOT_TOKEN;
+    const token = process.env.CLIENT_BOT_TOKEN || '8590320768:AAHwFYYxr5h0_mJdwQ9In14qvL3pquzTEUs';
     if (!token) {
         throw new Error('CLIENT_BOT_TOKEN is not configured');
     }
     
+    const defaultAppUrl = process.env.MINI_APP_URL || 'https://primora-client.onrender.com';
     const replyMarkup = {
         inline_keyboard: [
             [
                 {
                     text: 'Open App 🎵',
                     web_app: {
-                        url: 'https://musical-caramel-cae47e.netlify.app/'
+                        url: defaultAppUrl
                     }
                 }
             ]
@@ -1091,7 +1092,6 @@ router.post('/send-telegram', async (req, res) => {
             return res.json({ success: true, results });
         } else {
             // Send to a single user
-            // Get user's first name for personalization if target is a tg_id
             let personalizedText = message || '';
             try {
                 const [rows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? AND bot_id = ? LIMIT 1', [target, adminBotId]);
@@ -1106,10 +1106,11 @@ router.post('/send-telegram', async (req, res) => {
             }
 
             const tgRes = await sendTelegram(target, personalizedText, imageUrl);
+            const defaultAppUrl = process.env.MINI_APP_URL || 'https://primora-client.onrender.com';
 
             const [result] = await pool.execute(
-                "INSERT INTO broadcasts (message, image_url, btn_text, btn_url, bot_id, created_at) VALUES (?, ?, 'Open App 🎵', 'https://musical-caramel-cae47e.netlify.app/', ?, NOW())",
-                [message || '', imageUrl || null, adminBotId]
+                "INSERT INTO broadcasts (message, image_url, btn_text, btn_url, bot_id, created_at) VALUES (?, ?, 'Open App 🎵', ?, ?, NOW())",
+                [message || '', imageUrl || null, defaultAppUrl, adminBotId]
             );
             const broadcastId = result.insertId;
 
@@ -1129,19 +1130,20 @@ router.post('/send-telegram', async (req, res) => {
 });
 
 // Helper to send broadcast Telegram message
-async function sendBroadcastMessage(tgId, message, imageUrl, btnText = 'Open App 🎵', btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
-    const token = process.env.CLIENT_BOT_TOKEN;
+async function sendBroadcastMessage(tgId, message, imageUrl, btnText = 'Open App 🎵', btnUrl = null) {
+    const token = process.env.CLIENT_BOT_TOKEN || '8590320768:AAHwFYYxr5h0_mJdwQ9In14qvL3pquzTEUs';
     if (!token) {
         throw new Error('CLIENT_BOT_TOKEN is not configured');
     }
     
+    const defaultAppUrl = btnUrl || process.env.MINI_APP_URL || 'https://primora-client.onrender.com';
     const replyMarkup = {
         inline_keyboard: [
             [
                 {
                     text: btnText || 'Open App 🎵',
                     web_app: {
-                        url: btnUrl || 'https://musical-caramel-cae47e.netlify.app/'
+                        url: defaultAppUrl
                     }
                 }
             ]
@@ -1193,19 +1195,20 @@ async function sendBroadcastMessage(tgId, message, imageUrl, btnText = 'Open App
 }
 
 // Helper to edit Telegram message
-async function editTelegramMessage(tgId, messageId, newMessage, imageUrl, btnText = 'Open App 🎵', btnUrl = 'https://musical-caramel-cae47e.netlify.app/') {
-    const token = process.env.CLIENT_BOT_TOKEN;
+async function editTelegramMessage(tgId, messageId, newMessage, imageUrl, btnText = 'Open App 🎵', btnUrl = null) {
+    const token = process.env.CLIENT_BOT_TOKEN || '8590320768:AAHwFYYxr5h0_mJdwQ9In14qvL3pquzTEUs';
     if (!token) {
         throw new Error('CLIENT_BOT_TOKEN is not configured');
     }
 
+    const defaultAppUrl = btnUrl || process.env.MINI_APP_URL || 'https://primora-client.onrender.com';
     const replyMarkup = {
         inline_keyboard: [
             [
                 {
                     text: btnText || 'Open App 🎵',
                     web_app: {
-                        url: btnUrl || 'https://musical-caramel-cae47e.netlify.app/'
+                        url: defaultAppUrl
                     }
                 }
             ]
@@ -1257,7 +1260,7 @@ async function editTelegramMessage(tgId, messageId, newMessage, imageUrl, btnTex
 
 // Helper to delete Telegram message
 async function deleteTelegramMessage(tgId, messageId) {
-    const token = process.env.CLIENT_BOT_TOKEN;
+    const token = process.env.CLIENT_BOT_TOKEN || '8590320768:AAHwFYYxr5h0_mJdwQ9In14qvL3pquzTEUs';
     if (!token) {
         throw new Error('CLIENT_BOT_TOKEN is not configured');
     }
