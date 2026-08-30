@@ -836,11 +836,11 @@ if ($route === '/admin/withdrawals' && $method === 'GET') {
         $stmt = $pdo->prepare('
             SELECT w.*, a.username, a.first_name, a.last_name 
             FROM withdrawals w 
-            LEFT JOIN auth a ON w.user_id = a.tg_id AND a.bot_id = :bot_id
-            WHERE w.bot_id = :bot_id
+            LEFT JOIN auth a ON w.user_id = a.tg_id AND a.bot_id = :bot_id_auth
+            WHERE w.bot_id = :bot_id_w
             ORDER BY w.created_at DESC
         ');
-        $stmt->execute(['bot_id' => $botIdHeader]);
+        $stmt->execute(['bot_id_auth' => $botIdHeader, 'bot_id_w' => $botIdHeader]);
         $rows = $stmt->fetchAll();
         foreach ($rows as &$r) {
             $r['id'] = (int)$r['id'];
