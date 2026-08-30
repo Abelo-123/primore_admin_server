@@ -617,6 +617,18 @@ if ($route === '/admin/settings') {
                 $stmt = $pdo->prepare('UPDATE admin_users SET password = :password WHERE username = :username AND bot_id = :bot_id');
                 $stmt->execute(['password' => $value, 'username' => $adminUser, 'bot_id' => $botIdHeader]);
             } else {
+                if ($key === 'rate_multiplier') {
+                    $numVal = (float)$value;
+                    $stmtMin = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'min_rate_multiplier' AND bot_id = :bot_id LIMIT 1");
+                    $stmtMin->execute(['bot_id' => $botIdHeader]);
+                    $minAllowed = (float)($stmtMin->fetchColumn() ?: 55.0);
+                    if ($numVal < $minAllowed) {
+                        http_response_code(400);
+                        echo json_encode(['error' => "Rate multiplier cannot be set lower than JoAdmin's baseline (" . $minAllowed . "x)"]);
+                        exit;
+                    }
+                }
+
                 $stmt = $pdo->prepare('INSERT INTO settings (setting_key, bot_id, setting_value) VALUES (:key, :bot_id, :value) ON DUPLICATE KEY UPDATE setting_value = :value_update');
                 $stmt->execute(['key' => $key, 'bot_id' => $botIdHeader, 'value' => $value, 'value_update' => $value]);
             }
@@ -2214,6 +2226,23 @@ if ($route === '/admin/reseller/withdrawal-history' && $method === 'GET') {
 if ($route === '/admin/reseller/status' && $method === 'GET') {
     try {
         global $adminBotId;
+
+        // Sync minimum rate multiplier baseline from JoAdmin
+        try {
+            $joadminUrl = getEnvVar('JOADMIN_SERVER_URL', 'https://padmin121-1.onrender.com');
+            $joadminApiKey = getEnvVar('JOADMIN_API_KEY', '7aed775ad8b88b50a1706db2f35c5eaf');
+            $headers = ["x-api-key: {$joadminApiKey}"];
+            $joRes = curlRequest('GET', "{$joadminUrl}/api/admin/reseller/min-multiplier", $headers, null, 4);
+            if ($joRes['code'] === 200) {
+                $joData = json_decode($joRes['body'], true);
+                if (isset($joData['joadmin_multiplier'])) {
+                    $joMinStr = (string)$joData['joadmin_multiplier'];
+                    $stmt = $pdo->prepare("INSERT INTO settings (bot_id, setting_key, setting_value) VALUES (:bot_id, 'min_rate_multiplier', :val) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+                    $stmt->execute(['bot_id' => $adminBotId, 'val' => $joMinStr]);
+                }
+            }
+        } catch (Exception $syncErr) {}
+
         $stmt = $pdo->prepare("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('reseller_balance', 'total_deposit', 'rate_multiplier', 'min_rate_multiplier') AND bot_id = :bot_id");
         $stmt->execute(['bot_id' => $adminBotId]);
         $rows = $stmt->fetchAll();
@@ -2225,8 +2254,8 @@ if ($route === '/admin/reseller/status' && $method === 'GET') {
         
         $balance = isset($settings['reseller_balance']) ? (float)$settings['reseller_balance'] : 0.0;
         $totalDeposit = isset($settings['total_deposit']) ? (float)$settings['total_deposit'] : 0.0;
-        $multiplier = isset($settings['rate_multiplier']) ? (float)$settings['rate_multiplier'] : 1.0;
-        $minMultiplier = isset($settings['min_rate_multiplier']) ? (float)$settings['min_rate_multiplier'] : 1.0;
+        $multiplier = isset($settings['rate_multiplier']) ? (float)$settings['rate_multiplier'] : 55.0;
+        $minMultiplier = isset($settings['min_rate_multiplier']) ? (float)$settings['min_rate_multiplier'] : 55.0;
         
         echo json_encode([
             'success'              => true,
