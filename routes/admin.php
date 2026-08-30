@@ -127,7 +127,10 @@ if (
     $route !== '/admin/login' && 
     $route !== '/admin/reseller/deposit/callback' && 
     $route !== '/admin/reseller/deposit/public-status' &&
-    $route !== '/admin/reseller/withdrawal/callback'
+    $route !== '/admin/reseller/withdrawal/callback' &&
+    $route !== '/admin/reseller/withdrawal/confirm' &&
+    $route !== '/admin/reseller/withdrawal-history' &&
+    $route !== '/admin/reseller/status'
 ) {
     $effective = getEffectiveAdminPassword();
     if (empty($providedPass) || $providedPass !== $effective) {
@@ -2104,8 +2107,8 @@ if ($route === '/admin/reseller/withdraw-deposit' && $method === 'POST') {
             
             // Forward request to joadmin (best effort)
             $joadminRequestId = null;
-            $joadminUrl = getEnvVar('JOADMIN_SERVER_URL', 'https://padmin121.onrender.com');
-            $joadminApiKey = getEnvVar('JOADMIN_API_KEY');
+            $joadminUrl = getEnvVar('JOADMIN_SERVER_URL', 'https://padmin121-1.onrender.com');
+            $joadminApiKey = getEnvVar('JOADMIN_API_KEY', '7aed775ad8b88b50a1706db2f35c5eaf');
             $resellerId = getEnvVar('RESELLER_ID', 'primore');
             global $siteUrl;
             
@@ -2164,6 +2167,27 @@ if ($route === '/admin/reseller/withdraw-deposit' && $method === 'POST') {
 
 // ─── ROUTE: /admin/reseller/withdrawal-history (GET) ─────────────────
 if ($route === '/admin/reseller/withdrawal-history' && $method === 'GET') {
+    $providedKey = isset($_GET['key']) ? $_GET['key'] : (isset($_SERVER['HTTP_X_API_KEY']) ? $_SERVER['HTTP_X_API_KEY'] : '');
+    global $gopApiKey;
+    $allowedKeys = array_filter([
+        getEnvVar('JOADMIN_API_KEY'),
+        getEnvVar('GODOFPANEL_API_KEY'),
+        getEnvVar('PRIMORE_API_KEY'),
+        $gopApiKey,
+        '7aed775ad8b88b50a1706db2f35c5eaf',
+        '5874c72077ceb857da2ac6ed48816055'
+    ]);
+    $isApiKeyAuth = !empty($providedKey) && in_array(trim($providedKey), $allowedKeys, true);
+    
+    if (!$isApiKeyAuth) {
+        $effective = getEffectiveAdminPassword();
+        if (empty($providedPass) || $providedPass !== $effective) {
+            http_response_code(401);
+            echo json_encode(['error' => 'Unauthorized: Invalid or missing password']);
+            exit;
+        }
+    }
+    
     try {
         $stmt = $pdo->query("SELECT * FROM admin_withdrawals ORDER BY created_at DESC LIMIT 50");
         $rows = $stmt->fetchAll();
