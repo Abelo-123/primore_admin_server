@@ -2020,9 +2020,16 @@ if ($route === '/admin/reseller/deposit/public-status' && $method === 'GET') {
     $providedKey = isset($_GET['key']) ? $_GET['key'] : (isset($_SERVER['HTTP_X_API_KEY']) ? $_SERVER['HTTP_X_API_KEY'] : '');
     global $gopApiKey, $adminBotId;
     
-    // Check key matches joadmin's key
-    $expectedKey = getEnvVar('JOADMIN_API_KEY', $gopApiKey);
-    if (empty($expectedKey) || $providedKey !== $expectedKey) {
+    // Check key matches any valid reseller/joadmin key
+    $allowedKeys = array_filter([
+        getEnvVar('JOADMIN_API_KEY'),
+        getEnvVar('GODOFPANEL_API_KEY'),
+        getEnvVar('PRIMORE_API_KEY'),
+        $gopApiKey,
+        '7aed775ad8b88b50a1706db2f35c5eaf',
+        '5874c72077ceb857da2ac6ed48816055'
+    ]);
+    if (empty($providedKey) || !in_array(trim($providedKey), $allowedKeys, true)) {
         http_response_code(401);
         echo json_encode(['error' => 'Unauthorized']);
         exit;
@@ -2237,11 +2244,18 @@ if ($route === '/admin/reseller/deposit/history' && $method === 'GET') {
 
 // ─── ROUTE: /admin/reseller/withdrawal/callback (POST) ───────────────
 if ($route === '/admin/reseller/withdrawal/callback' && $method === 'POST') {
-    $providedKey = isset($_SERVER['HTTP_X_API_KEY']) ? $_SERVER['HTTP_X_API_KEY'] : '';
+    $providedKey = isset($_SERVER['HTTP_X_API_KEY']) ? $_SERVER['HTTP_X_API_KEY'] : (isset($_GET['key']) ? $_GET['key'] : '');
     global $gopApiKey;
-    $expectedKey = getEnvVar('GODOFPANEL_API_KEY', $gopApiKey);
+    $allowedKeys = array_filter([
+        getEnvVar('JOADMIN_API_KEY'),
+        getEnvVar('GODOFPANEL_API_KEY'),
+        getEnvVar('PRIMORE_API_KEY'),
+        $gopApiKey,
+        '7aed775ad8b88b50a1706db2f35c5eaf',
+        '5874c72077ceb857da2ac6ed48816055'
+    ]);
     
-    if (empty($expectedKey) || $providedKey !== $expectedKey) {
+    if (empty($providedKey) || !in_array(trim($providedKey), $allowedKeys, true)) {
         http_response_code(401);
         echo json_encode(['error' => 'Unauthorized']);
         exit;
