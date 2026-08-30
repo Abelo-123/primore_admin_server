@@ -2266,8 +2266,8 @@ if ($route === '/admin/reseller/deposit/history' && $method === 'GET') {
 }
 
 
-// ─── ROUTE: /admin/reseller/withdrawal/callback (POST) ───────────────
-if ($route === '/admin/reseller/withdrawal/callback' && $method === 'POST') {
+// ─── ROUTE: /admin/reseller/withdrawal/callback & /confirm (POST) ───
+if (($route === '/admin/reseller/withdrawal/callback' || $route === '/admin/reseller/withdrawal/confirm') && $method === 'POST') {
     $providedKey = isset($_SERVER['HTTP_X_API_KEY']) ? $_SERVER['HTTP_X_API_KEY'] : (isset($_GET['key']) ? $_GET['key'] : '');
     global $gopApiKey;
     $allowedKeys = array_filter([
@@ -2288,7 +2288,7 @@ if ($route === '/admin/reseller/withdrawal/callback' && $method === 'POST') {
     $localId = isset($requestData['local_id']) ? (int)$requestData['local_id'] : 0;
     $amount = isset($requestData['amount']) ? (float)$requestData['amount'] : 0.0;
     
-    if (!$localId || $amount <= 0) {
+    if (!$localId) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'Invalid parameters']);
         exit;
@@ -2307,29 +2307,34 @@ if ($route === '/admin/reseller/withdrawal/callback' && $method === 'POST') {
             exit;
         }
         
-        if ($req['status'] === 'success') {
+        if ($req['status'] === 'sent' || $req['status'] === 'success') {
             $pdo->rollBack();
-            echo json_encode(['success' => true, 'message' => 'Already processed']);
+            echo json_encode(['success' => true, 'message' => 'Already marked as sent']);
             exit;
         }
         
-        // Update status to success
-        $stmt = $pdo->prepare("UPDATE admin_withdrawals SET status = 'success', sent_at = NOW() WHERE id = :id");
+        // Ensure sent_at column exists
+        try { $pdo->exec("ALTER TABLE admin_withdrawals ADD COLUMN sent_at DATETIME DEFAULT NULL"); } catch (Exception $e) {}
+
+        // Update status to sent
+        $stmt = $pdo->prepare("UPDATE admin_withdrawals SET status = 'sent', sent_at = NOW() WHERE id = :id");
         $stmt->execute(['id' => $localId]);
         
         // Decrease total_deposit setting in settings table scoped by bot_id
-        global $adminBotId;
-        $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'total_deposit' AND bot_id = :bot_id LIMIT 1");
-        $stmt->execute(['bot_id' => $adminBotId]);
-        $currentTotal = (float)($stmt->fetchColumn() ?: 0.0);
-        
-        $newTotal = max(0.0, $currentTotal - $amount);
-        
-        $stmt = $pdo->prepare("UPDATE settings SET setting_value = :val WHERE setting_key = 'total_deposit' AND bot_id = :bot_id");
-        $stmt->execute(['val' => (string)$newTotal, 'bot_id' => $adminBotId]);
+        if ($amount > 0) {
+            global $adminBotId;
+            $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'total_deposit' AND bot_id = :bot_id LIMIT 1");
+            $stmt->execute(['bot_id' => $adminBotId]);
+            $currentTotal = (float)($stmt->fetchColumn() ?: 0.0);
+            
+            $newTotal = max(0.0, $currentTotal - $amount);
+            
+            $stmt = $pdo->prepare("UPDATE settings SET setting_value = :val WHERE setting_key = 'total_deposit' AND bot_id = :bot_id");
+            $stmt->execute(['val' => (string)$newTotal, 'bot_id' => $adminBotId]);
+        }
         
         $pdo->commit();
-        echo json_encode(['success' => true, 'message' => 'Withdrawal completed, total deposit decreased']);
+        echo json_encode(['success' => true, 'message' => 'Withdrawal completed and marked as sent']);
     } catch (Exception $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
