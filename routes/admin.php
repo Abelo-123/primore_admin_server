@@ -582,10 +582,6 @@ if ($route === '/admin/deposits' && $method === 'GET') {
 if ($route === '/admin/settings') {
     if ($method === 'GET') {
         try {
-// ─── ROUTE: /admin/settings (GET / POST) ─────────────────────────
-if ($route === '/admin/settings') {
-    if ($method === 'GET') {
-        try {
             $stmt = $pdo->prepare('SELECT setting_key, setting_value FROM settings');
             $stmt->execute();
             $rows = $stmt->fetchAll();
