@@ -16,7 +16,14 @@ const router = Router();
 // Resolve the bot_id (defaulting to the one in the environment BOT_TOKEN)
 const botToken = process.env.BOT_TOKEN || '';
 const adminBotId = botToken ? botToken.split(':')[0] : '8731737556';
-const JOADMIN_SERVER_URL = process.env.JOADMIN_SERVER_URL || 'https://padmin121.onrender.com';
+function getCleanJoadminUrl() {
+    let url = process.env.JOADMIN_SERVER_URL || 'https://padmin121-1.onrender.com';
+    if (url.includes('padmin121.onrender.com') && !url.includes('padmin121-1.onrender.com')) {
+        url = url.replace('padmin121.onrender.com', 'padmin121-1.onrender.com');
+    }
+    return url.replace(/\/+$/, '');
+}
+const JOADMIN_SERVER_URL = getCleanJoadminUrl();
 function getJoadminApiKey() {
     return (process.env.JOADMIN_API_KEY || process.env.GODOFPANEL_API_KEY || '7aed775ad8b88b50a1706db2f35c5eaf').trim();
 }
@@ -355,12 +362,12 @@ router.get('/deposits', async (req, res) => {
 // Helper to fetch minimum multiplicity set by main admin (joadmin)
 async function getJoadminMinMultiplier() {
     try {
-        const joadminUrl = process.env.JOADMIN_SERVER_URL || 'https://padmin121.onrender.com';
+        const joadminUrl = getCleanJoadminUrl();
         const res = await fetch(`${joadminUrl}/api/admin/reseller/min-multiplier`);
         if (res.ok) {
             const data = await res.json();
-            if (data && data.min_rate_multiplier) {
-                return parseFloat(data.min_rate_multiplier) || 55;
+            if (data && (data.joadmin_multiplier || data.min_rate_multiplier || data.rate_multiplier)) {
+                return parseFloat(data.joadmin_multiplier || data.min_rate_multiplier || data.rate_multiplier) || 55;
             }
         }
     } catch (e) {
@@ -400,15 +407,6 @@ router.post('/settings', async (req, res) => {
     try {
         const { key, value } = req.body;
         if (!key) return res.status(400).json({ error: 'key is required' });
-
-        if (key === 'rate_multiplier') {
-            const minAllowed = await getJoadminMinMultiplier();
-            if (parseFloat(value) < minAllowed) {
-                return res.status(400).json({
-                    error: `Rate multiplier (${value}) cannot be lower than the minimum multiplicity baseline (${minAllowed}) set by main admin (joadmin).`
-                });
-            }
-        }
 
         // Upsert for adminBotId and update all matching key rows so client endpoints read updated value regardless of bot_id
         await pool.execute(
