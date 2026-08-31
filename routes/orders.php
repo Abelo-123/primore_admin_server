@@ -218,10 +218,9 @@ if ($route === '/orders/place') {
         // Wholesale reseller cost equals total order charge for the reseller bot
         $resellerCostEtb = $totalCostEtb;
 
-        // Fetch reseller_balance from settings using user's bot_id
-        $botId = isset($user['bot_id']) ? $user['bot_id'] : $adminBotId;
-        $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id LIMIT 1");
-        $stmt->execute(['bot_id' => $botId]);
+        // Fetch reseller_balance from settings
+        $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'reseller_balance' LIMIT 1");
+        $stmt->execute();
         $resellerRow = $stmt->fetch();
         $resellerBalance = $resellerRow ? (float)$resellerRow['setting_value'] : 0.0;
 
@@ -304,9 +303,9 @@ if ($route === '/orders/place') {
         $stmtDeduct = $pdo->prepare("
             UPDATE settings 
             SET setting_value = CAST(GREATEST(0.00, CAST(setting_value AS DECIMAL(15,4)) - :cost) AS CHAR) 
-            WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id
+            WHERE setting_key = 'reseller_balance'
         ");
-        $stmtDeduct->execute(['cost' => $resellerCostEtb, 'bot_id' => $botId]);
+        $stmtDeduct->execute(['cost' => $resellerCostEtb]);
 
         $pdo->commit();
 
@@ -463,16 +462,16 @@ if ($route === '/orders/status') {
                         }
                     }
 
-                    if ($resellerRefund > 0 && !empty($order['bot_id'])) {
+                    if ($resellerRefund > 0) {
                         try {
                             $stmtCredit = $pdo->prepare("
                                 UPDATE settings 
                                 SET setting_value = CAST((CAST(setting_value AS DECIMAL(15,4)) + :ref) AS CHAR) 
-                                WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id
+                                WHERE setting_key = 'reseller_balance'
                             ");
-                            $stmtCredit->execute(['ref' => $resellerRefund, 'bot_id' => $order['bot_id']]);
+                            $stmtCredit->execute(['ref' => $resellerRefund]);
                         } catch (Exception $e) {
-                            error_log("RESELLER REFUND CREDIT FAILED FOR BOT " . $order['bot_id'] . ": " . $e->getMessage());
+                            error_log("RESELLER REFUND CREDIT FAILED: " . $e->getMessage());
                         }
                     }
                 }
@@ -503,7 +502,7 @@ if ($route === '/orders/status') {
 if ($route === '/orders/sync-all') {
     try {
         $stmt = $pdo->prepare("
-            SELECT id, api_order_id, cost, charge, quantity, status, reseller_cost, bot_id, user_id 
+            SELECT id, api_order_id, cost, charge, quantity, status, reseller_cost, user_id 
             FROM orders 
             WHERE status IN ('pending', 'in_progress', 'processing') AND api_order_id IS NOT NULL AND api_order_id > 0
             ORDER BY id ASC
@@ -573,16 +572,16 @@ if ($route === '/orders/sync-all') {
                         }
                     }
 
-                    if ($resellerRefund > 0 && !empty($order['bot_id'])) {
+                    if ($resellerRefund > 0) {
                         try {
                             $stmtCredit = $pdo->prepare("
                                 UPDATE settings 
                                 SET setting_value = CAST((CAST(setting_value AS DECIMAL(15,4)) + :ref) AS CHAR) 
-                                WHERE setting_key = 'reseller_balance' AND bot_id = :bot_id
+                                WHERE setting_key = 'reseller_balance'
                             ");
-                            $stmtCredit->execute(['ref' => $resellerRefund, 'bot_id' => $order['bot_id']]);
+                            $stmtCredit->execute(['ref' => $resellerRefund]);
                         } catch (Exception $e) {
-                            error_log("CRON RESELLER REFUND CREDIT FAILED FOR BOT " . $order['bot_id'] . ": " . $e->getMessage());
+                            error_log("CRON RESELLER REFUND CREDIT FAILED: " . $e->getMessage());
                         }
                     }
                 }
