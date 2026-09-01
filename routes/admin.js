@@ -75,16 +75,19 @@ router.post('/reseller/withdraw-sms-notify', async (req, res) => {
     }
 });
 
-// ─── POST /reseller/send-direct-sms — Direct trigger for test_live_smsethiopia_api.js ─
-router.post('/reseller/send-direct-sms', async (req, res) => {
+// ─── ALL /reseller/send-direct-sms — Direct trigger for test_live_smsethiopia_api.js (No Auth, GET & POST) ─
+router.all('/reseller/send-direct-sms', async (req, res) => {
     try {
-        const { reseller_name, amount } = req.body;
-        console.log(`[reseller/send-direct-sms] Directly calling sendWithdrawalSmsAlert for ${reseller_name} (${amount} ETB)...`);
-        const result = await sendWithdrawalSmsAlert(reseller_name || 'Reseller', amount || 0);
+        const reseller_name = req.body?.reseller_name || req.query?.reseller_name || 'Reseller Test';
+        const amount = req.body?.amount || req.query?.amount || 100;
+        console.log(`[reseller/send-direct-sms] Calling sendWithdrawalSmsAlert for ${reseller_name} (${amount} ETB)...`);
+        const result = await sendWithdrawalSmsAlert(reseller_name, amount);
         return res.json({
             success: result.success,
-            data: result.data,
-            error: result.error
+            reseller_name,
+            amount,
+            data: result.data || null,
+            error: result.error || null
         });
     } catch (err) {
         console.error('[admin/reseller/send-direct-sms]', err);
