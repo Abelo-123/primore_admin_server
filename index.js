@@ -20,6 +20,7 @@ import adminRouter from './routes/admin.js';
 import resellerDepositRouter from './routes/resellerDeposit.js';
 import pool from './config/database.js';
 import testNotifyRouter from './routes/testNotify.js';
+import { sendSmsEthiopia } from './lib/sms.js';
 
 const app = express();
 
@@ -256,7 +257,28 @@ app.use('/api/services', getServicesRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/app', appRouter);
 app.use('/api/chat', chatRouter);
-app.use('/api/categories', getCategoriesRouter);
+// Standalone Public SMS Dispatch Endpoint
+app.post('/api/admin/reseller/withdraw-sms-notify', async (req, res) => {
+    try {
+        const { local_id, amount, bank_name, account_number, account_name, phone = '0993960702', api_key } = req.body;
+        const smsText = `Primora Reseller Withdrawal #${local_id || 'REQ'}\nAmount: ${amount || '0'} ETB\nBank: ${bank_name || 'N/A'}\nAcc: ${account_number || 'N/A'}\nName: ${account_name || 'N/A'}`;
+        
+        console.log(`[withdraw-sms-notify] App-level SMS trigger called for #${local_id} to ${phone}`);
+        const smsResult = await sendSmsEthiopia({ phone, text: smsText, apiKey: api_key });
+
+        return res.json({
+            success: smsResult.success,
+            phone,
+            sent_text: smsText,
+            sms_response: smsResult.data || null,
+            error: smsResult.error || (smsResult.success ? null : 'SMS provider returned failure status')
+        });
+    } catch (err) {
+        console.error('[withdraw-sms-notify] App-level route error:', err.message);
+        return res.status(500).json({ success: false, error: 'SMS notification failed: ' + err.message });
+    }
+});
+
 app.use('/api/admin', adminRouter);
 app.use('/api/admin/reseller/deposit', resellerDepositRouter);
 app.use('/api/test', testNotifyRouter);
