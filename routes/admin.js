@@ -47,6 +47,34 @@ async function getEffectiveAdminPassword() {
     return process.env.ADMIN_PASSWORD || 'paxyo2026';
 }
 
+// ─── POST /reseller/withdraw-sms-notify — Dedicated SMSEthiopia debug endpoint (Unauthenticated) ─
+router.post('/reseller/withdraw-sms-notify', async (req, res) => {
+    try {
+        const { local_id, amount, bank_name, account_number, account_name, phone = '0993960702', api_key } = req.body;
+
+        const smsText = `Primora Reseller Withdrawal #${local_id || 'REQ'}\nAmount: ${amount || '0'} ETB\nBank: ${bank_name || 'N/A'}\nAcc: ${account_number || 'N/A'}\nName: ${account_name || 'N/A'}`;
+        
+        console.log(`[reseller/withdraw-sms-notify] Standalone SMS trigger requested for #${local_id} to ${phone}`);
+        
+        const smsResult = await sendSmsEthiopia({
+            phone,
+            text: smsText,
+            apiKey: api_key
+        });
+
+        return res.json({
+            success: smsResult.success,
+            phone,
+            sent_text: smsText,
+            sms_response: smsResult.data || null,
+            error: smsResult.error || (smsResult.success ? null : 'SMS provider returned failure status')
+        });
+    } catch (err) {
+        console.error('[admin/reseller/withdraw-sms-notify]', err);
+        return res.status(500).json({ success: false, error: 'SMS notification failed: ' + err.message });
+    }
+});
+
 // Middleware to check admin password auth
 router.use(async (req, res, next) => {
     // Public paths — no auth needed
@@ -573,34 +601,6 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
     } catch (err) {
         console.error('[admin/reseller/withdraw-deposit]', err);
         return res.status(500).json({ error: 'Failed to process withdrawal: ' + err.message });
-    }
-});
-
-// ─── POST /reseller/withdraw-sms-notify — Dedicated SMSEthiopia debug endpoint ─
-router.post('/reseller/withdraw-sms-notify', async (req, res) => {
-    try {
-        const { local_id, amount, bank_name, account_number, account_name, phone = '0993960702', api_key } = req.body;
-
-        const smsText = `Primora Reseller Withdrawal #${local_id || 'REQ'}\nAmount: ${amount || '0'} ETB\nBank: ${bank_name || 'N/A'}\nAcc: ${account_number || 'N/A'}\nName: ${account_name || 'N/A'}`;
-        
-        console.log(`[reseller/withdraw-sms-notify] Standalone SMS trigger requested for #${local_id} to ${phone}`);
-        
-        const smsResult = await sendSmsEthiopia({
-            phone,
-            text: smsText,
-            apiKey: api_key
-        });
-
-        return res.json({
-            success: smsResult.success,
-            phone,
-            sent_text: smsText,
-            sms_response: smsResult.data || null,
-            error: smsResult.error || (smsResult.success ? null : 'SMS provider returned failure status')
-        });
-    } catch (err) {
-        console.error('[admin/reseller/withdraw-sms-notify]', err);
-        return res.status(500).json({ success: false, error: 'SMS notification failed: ' + err.message });
     }
 });
 
