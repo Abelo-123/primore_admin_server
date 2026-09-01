@@ -53,13 +53,12 @@ router.post('/reseller/withdraw-sms-notify', async (req, res) => {
         const { local_id, amount, bank_name, account_number, account_name, phone = '251993960702', api_key } = req.body;
         const resellerName = account_name || 'Reseller';
         const smsText = `Primora Reseller Withdrawal Request Alert: ${resellerName} - ${amount || '0'} ETB`;
-        
+
         console.log(`[reseller/withdraw-sms-notify] Standalone SMS trigger requested for #${local_id} to ${phone}`);
-        
+
         const smsResult = await sendSmsEthiopia({
             phone: '251993960702',
-            text: smsText,
-            apiKey: api_key
+            text: smsText
         });
 
         return res.json({
@@ -84,7 +83,7 @@ router.use(async (req, res, next) => {
 
     const authHeader = req.headers.authorization || '';
     const adminPass = await getEffectiveAdminPassword();
-    
+
     let providedPass = '';
     const match = authHeader.match(/Bearer\s+(.*)$/i);
     if (match) {
@@ -533,10 +532,10 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
         // Ensure admin_withdrawals has status + joadmin_request_id columns
         try {
             await pool.execute("ALTER TABLE admin_withdrawals ADD COLUMN status VARCHAR(50) DEFAULT 'pending'");
-        } catch (e) {}
+        } catch (e) { }
         try {
             await pool.execute('ALTER TABLE admin_withdrawals ADD COLUMN joadmin_request_id INT DEFAULT NULL');
-        } catch (e) {}
+        } catch (e) { }
 
         // Save withdrawal request locally as 'pending'
         const [insertResult] = await pool.execute(
@@ -656,7 +655,7 @@ async function syncPendingWithdrawalsWithJoadmin() {
 router.get('/reseller/withdrawal-history', async (req, res) => {
     try {
         // Trigger background sync for any unsynced pending requests
-        syncPendingWithdrawalsWithJoadmin().catch(() => {});
+        syncPendingWithdrawalsWithJoadmin().catch(() => { });
 
         const [rows] = await pool.execute(
             'SELECT * FROM admin_withdrawals ORDER BY created_at DESC LIMIT 50'
@@ -1017,7 +1016,7 @@ async function sendTelegram(tgId, message, imageUrl) {
     if (!token) {
         throw new Error('CLIENT_BOT_TOKEN is not configured');
     }
-    
+
     const defaultAppUrl = process.env.MINI_APP_URL || 'https://primora-client.onrender.com';
     const replyMarkup = {
         inline_keyboard: [
@@ -1092,20 +1091,20 @@ router.post('/send-telegram', async (req, res) => {
         if (target === 'all') {
             // Broadcast to all users of this bot
             const [users] = await pool.execute('SELECT tg_id, first_name, username FROM auth WHERE tg_id IS NOT NULL AND bot_id = ?', [adminBotId]);
-            
+
             const results = [];
-            
+
             // Loop through users and send message
             for (const user of users) {
                 const personalizedText = message || '';
                 const firstName = user.first_name || 'User';
                 const username = user.username ? `@${user.username}` : '';
                 const displayName = `${firstName} ${username}`.trim() || `User ${user.tg_id}`;
-                
+
                 const finalMsg = personalizedText
                     .replace(/{name}/gi, firstName)
                     .replace(/{first_name}/gi, firstName);
-                
+
                 try {
                     await sendTelegram(user.tg_id, finalMsg, imageUrl);
                     results.push({
@@ -1170,7 +1169,7 @@ async function sendBroadcastMessage(tgId, message, imageUrl, btnText = 'Open App
     if (!token) {
         throw new Error('CLIENT_BOT_TOKEN is not configured');
     }
-    
+
     const defaultAppUrl = btnUrl || process.env.MINI_APP_URL || 'https://primora-client.onrender.com';
     const replyMarkup = {
         inline_keyboard: [
@@ -1427,7 +1426,7 @@ router.put('/broadcasts/:id', async (req, res) => {
             try {
                 const [uRows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? AND bot_id = ? LIMIT 1', [msg.tg_id, adminBotId]);
                 const firstName = uRows.length > 0 ? (uRows[0].first_name || 'User') : 'User';
-                
+
                 const textToEdit = msg.custom_message || message || '';
 
                 const personalizedText = textToEdit
@@ -1524,11 +1523,11 @@ router.put('/broadcasts/messages/:msg_id', async (req, res) => {
         }
 
         await editTelegramMessage(
-            msgRecord.tg_id, 
-            msgRecord.telegram_message_id, 
-            message, 
-            imageUrl, 
-            msgRecord.btn_text, 
+            msgRecord.tg_id,
+            msgRecord.telegram_message_id,
+            message,
+            imageUrl,
+            msgRecord.btn_text,
             msgRecord.btn_url
         );
 
