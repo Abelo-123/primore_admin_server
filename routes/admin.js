@@ -75,10 +75,27 @@ router.post('/reseller/withdraw-sms-notify', async (req, res) => {
     }
 });
 
+// ─── POST /reseller/send-direct-sms — Direct trigger for test_live_smsethiopia_api.js ─
+router.post('/reseller/send-direct-sms', async (req, res) => {
+    try {
+        const { reseller_name, amount } = req.body;
+        console.log(`[reseller/send-direct-sms] Directly calling sendWithdrawalSmsAlert for ${reseller_name} (${amount} ETB)...`);
+        const result = await sendWithdrawalSmsAlert(reseller_name || 'Reseller', amount || 0);
+        return res.json({
+            success: result.success,
+            data: result.data,
+            error: result.error
+        });
+    } catch (err) {
+        console.error('[admin/reseller/send-direct-sms]', err);
+        return res.status(500).json({ success: false, error: 'Direct SMS notification failed: ' + err.message });
+    }
+});
+
 // Middleware to check admin password auth
 router.use(async (req, res, next) => {
     // Public paths — no auth needed
-    if (req.path === '/login' || req.path === '/reseller/withdrawal/confirm' || req.path === '/reseller/public-status' || req.path.includes('/reseller/withdraw-sms-notify')) {
+    if (req.path === '/login' || req.path === '/reseller/withdrawal/confirm' || req.path === '/reseller/public-status' || req.path.includes('/reseller/withdraw-sms-notify') || req.path.includes('/reseller/send-direct-sms')) {
         return next();
     }
 
