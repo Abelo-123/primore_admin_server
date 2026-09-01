@@ -106,31 +106,31 @@ router.use(async (req, res, next) => {
         p.includes('send-direct-sms')
     ) {
         return next();
-    }
+    } else {
+        const authHeader = req.headers.authorization || '';
+        const adminPass = await getEffectiveAdminPassword();
 
-    const authHeader = req.headers.authorization || '';
-    const adminPass = await getEffectiveAdminPassword();
-
-    let providedPass = '';
-    const match = authHeader.match(/Bearer\s+(.*)$/i);
-    if (match) {
-        providedPass = match[1];
-        if (providedPass.includes(':')) {
-            const parts = providedPass.split(':');
-            if (parts.length >= 4) {
-                // Format: username:password:botToken:botId
-                providedPass = parts[1];
-            } else if (parts.length === 2) {
-                // Format: username:password
-                providedPass = parts[1];
+        let providedPass = '';
+        const match = authHeader.match(/Bearer\s+(.*)$/i);
+        if (match) {
+            providedPass = match[1];
+            if (providedPass.includes(':')) {
+                const parts = providedPass.split(':');
+                if (parts.length >= 4) {
+                    // Format: username:password:botToken:botId
+                    providedPass = parts[1];
+                } else if (parts.length === 2) {
+                    // Format: username:password
+                    providedPass = parts[1];
+                }
             }
         }
-    }
 
-    if (!providedPass || providedPass !== adminPass) {
-        return res.status(401).json({ error: 'Unauthorized' });
+        if (!providedPass || providedPass !== adminPass) {
+            return res.status(401).json({ error: 'Unauthorized: Invalid or missing password' });
+        }
+        return next();
     }
-    next();
 });
 
 // Login endpoint
