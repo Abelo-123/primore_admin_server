@@ -599,7 +599,6 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
             local_id: localId,
             joadmin_request_id: joadminRequestId,
             status: 'pending',
-            sms_result: smsResult,
             message: 'Withdrawal request submitted. Awaiting joadmin confirmation.'
         });
     } catch (err) {
