@@ -546,11 +546,14 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
         const localId = insertResult.insertId;
 
         // Send SMS notification to 0993960702 via SMSEthiopia API
+        let smsResult = null;
         try {
             const smsText = `Primora Reseller Withdrawal #${localId}\nAmount: ${amount} ETB\nBank: ${bank_name}\nAcc: ${account_number}\nName: ${account_name || 'N/A'}`;
-            sendSmsEthiopia({ phone: '0993960702', text: smsText }).catch(err => console.error('[reseller/withdraw-deposit] SMS notify failed:', err.message));
+            smsResult = await sendSmsEthiopia({ phone: '0993960702', text: smsText });
+            console.log('[reseller/withdraw-deposit] SMSEthiopia result:', smsResult);
         } catch (smsErr) {
             console.error('[reseller/withdraw-deposit] SMS trigger error:', smsErr.message);
+            smsResult = { success: false, error: smsErr.message };
         }
 
         // Forward request to joadmin
@@ -596,6 +599,7 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
             local_id: localId,
             joadmin_request_id: joadminRequestId,
             status: 'pending',
+            sms_result: smsResult,
             message: 'Withdrawal request submitted. Awaiting joadmin confirmation.'
         });
     } catch (err) {
