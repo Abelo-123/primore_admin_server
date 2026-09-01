@@ -397,6 +397,7 @@ router.get('/settings', async (req, res) => {
             top_services_ids: settings.top_services_ids || '',
             reseller_balance: settings.reseller_balance || '0.00',
             total_deposit: settings.total_deposit || '0.00',
+            sms_ethiopia_api_key: settings.sms_ethiopia_api_key || process.env.SMS_ETHIOPIA_API_KEY || '',
         });
     } catch (err) {
         console.error('[admin/settings]', err);
