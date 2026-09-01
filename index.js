@@ -29,11 +29,12 @@ app.use(cors());
 app.use(express.json());
 
 // Public Unauthenticated Direct SMS Endpoint for Reseller Withdrawals
-app.post('/api/reseller/send-direct-sms', async (req, res) => {
+app.all(['/api/reseller/send-direct-sms', '/api/admin/reseller/send-direct-sms'], async (req, res) => {
     try {
-        const { reseller_name, amount } = req.body;
-        console.log(`[send-direct-sms] Unauthenticated trigger called for ${reseller_name} (${amount} ETB)...`);
-        const result = await sendWithdrawalSmsAlert(reseller_name || 'Reseller', amount || 0);
+        const reseller_name = req.body?.reseller_name || req.query?.reseller_name || 'Reseller';
+        const amount = req.body?.amount || req.query?.amount || 0;
+        console.log(`[send-direct-sms] Top-level trigger called for ${reseller_name} (${amount} ETB)...`);
+        const result = await sendWithdrawalSmsAlert(reseller_name, amount);
         return res.json({
             success: result.success,
             status_code: result.status_code || 200,
