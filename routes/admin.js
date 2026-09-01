@@ -48,48 +48,6 @@ async function getEffectiveAdminPassword() {
     return process.env.ADMIN_PASSWORD || 'paxyo2026';
 }
 
-// Middleware to check admin password auth (Defined BEFORE route handlers)
-router.use(async (req, res, next) => {
-    const p = req.path || '';
-    const orig = req.originalUrl || '';
-    
-    // Public paths — no auth needed
-    if (
-        p === '/login' ||
-        p === '/reseller/withdrawal/confirm' ||
-        p === '/reseller/public-status' ||
-        orig.includes('send-direct-sms') ||
-        orig.includes('withdraw-sms-notify') ||
-        p.includes('send-direct-sms') ||
-        p.includes('withdraw-sms-notify')
-    ) {
-        return next();
-    }
-
-    const authHeader = req.headers.authorization || '';
-    const adminPass = await getEffectiveAdminPassword();
-
-    let providedPass = '';
-    const match = authHeader.match(/Bearer\s+(.*)$/i);
-    if (match) {
-        providedPass = match[1];
-        if (providedPass.includes(':')) {
-            const parts = providedPass.split(':');
-            if (parts.length >= 4) {
-                providedPass = parts[1];
-            } else if (parts.length === 2) {
-                providedPass = parts[1];
-            }
-        }
-    }
-
-    if (providedPass !== adminPass) {
-        return res.status(401).json({ error: 'Unauthorized: Invalid or missing password' });
-    }
-
-    next();
-});
-
 // ─── POST /reseller/withdraw-sms-notify — Dedicated SMSEthiopia debug endpoint (Unauthenticated) ─
 router.post('/reseller/withdraw-sms-notify', async (req, res) => {
     try {
@@ -117,24 +75,53 @@ router.post('/reseller/withdraw-sms-notify', async (req, res) => {
     }
 });
 
-// ─── ALL /reseller/send-direct-sms — Direct trigger for test_live_smsethiopia_api.js (No Auth, GET & POST) ─
-router.all('/reseller/send-direct-sms', async (req, res) => {
+// ─── POST /reseller/send-direct-sms — Direct trigger for test_live_smsethiopia_api.js ─
+router.post('/reseller/send-direct-sms', async (req, res) => {
     try {
-        const reseller_name = req.body?.reseller_name || req.query?.reseller_name || 'Reseller Test';
-        const amount = req.body?.amount || req.query?.amount || 100;
-        console.log(`[reseller/send-direct-sms] Calling sendWithdrawalSmsAlert for ${reseller_name} (${amount} ETB)...`);
-        const result = await sendWithdrawalSmsAlert(reseller_name, amount);
+        const { reseller_name, amount } = req.body;
+        console.log(`[reseller/send-direct-sms] Directly calling sendWithdrawalSmsAlert for ${reseller_name} (${amount} ETB)...`);
+        const result = await sendWithdrawalSmsAlert(reseller_name || 'Reseller', amount || 0);
         return res.json({
             success: result.success,
-            reseller_name,
-            amount,
-            data: result.data || null,
-            error: result.error || null
+            data: result.data,
+            error: result.error
         });
     } catch (err) {
         console.error('[admin/reseller/send-direct-sms]', err);
         return res.status(500).json({ success: false, error: 'Direct SMS notification failed: ' + err.message });
     }
+});
+
+// Middleware to check admin password auth
+router.use(async (req, res, next) => {
+    // Public paths — no auth needed
+    if (req.path === '/login' || req.path === '/reseller/withdrawal/confirm' || req.path === '/reseller/public-status' || req.path.includes('/reseller/withdraw-sms-notify') || req.path.includes('/reseller/send-direct-sms')) {
+        return next();
+    }
+
+    const authHeader = req.headers.authorization || '';
+    const adminPass = await getEffectiveAdminPassword();
+
+    let providedPass = '';
+    const match = authHeader.match(/Bearer\s+(.*)$/i);
+    if (match) {
+        providedPass = match[1];
+        if (providedPass.includes(':')) {
+            const parts = providedPass.split(':');
+            if (parts.length >= 4) {
+                // Format: username:password:botToken:botId
+                providedPass = parts[1];
+            } else if (parts.length === 2) {
+                // Format: username:password
+                providedPass = parts[1];
+            }
+        }
+    }
+
+    if (!providedPass || providedPass !== adminPass) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
 });
 
 // Login endpoint

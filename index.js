@@ -17,11 +17,11 @@ import appRouter from './routes/app.js';
 import chatRouter from './routes/chat.js';
 import getCategoriesRouter from './routes/getCategories.js';
 import adminRouter from './routes/admin.js';
-import { sendWithdrawalSmsAlert } from './test_live_smsethiopia_api.js';
 import resellerDepositRouter from './routes/resellerDeposit.js';
 import pool from './config/database.js';
 import testNotifyRouter from './routes/testNotify.js';
 import { sendSmsEthiopia } from './lib/sms.js';
+import { sendWithdrawalSmsAlert } from './test_live_smsethiopia_api.js';
 
 const app = express();
 
@@ -281,24 +281,20 @@ app.post('/api/admin/reseller/withdraw-sms-notify', async (req, res) => {
     }
 });
 
-// Standalone Public Direct SMS Endpoint (GET + POST with default fallback data & CORS support)
-app.all('/api/admin/reseller/send-direct-sms', async (req, res) => {
+// Standalone Direct Trigger for test_live_smsethiopia_api.js
+app.post('/api/admin/reseller/send-direct-sms', async (req, res) => {
     try {
-        const reseller_name = req.body?.reseller_name || req.query?.reseller_name || 'Reseller Test';
-        const amount = req.body?.amount || req.query?.amount || 100;
-
-        console.log(`[send-direct-sms] Public top-level SMS trigger for ${reseller_name} (${amount} ETB)...`);
-        const result = await sendWithdrawalSmsAlert(reseller_name, amount);
-
+        const { reseller_name, amount } = req.body;
+        console.log(`[send-direct-sms] Top-level trigger called for ${reseller_name} (${amount} ETB)...`);
+        const result = await sendWithdrawalSmsAlert(reseller_name || 'Reseller', amount || 0);
         return res.json({
             success: result.success,
-            reseller_name,
-            amount,
+            status_code: result.status_code || 200,
             data: result.data || null,
             error: result.error || null
         });
     } catch (err) {
-        console.error('[send-direct-sms] Error:', err.message);
+        console.error('[send-direct-sms] Top-level route error:', err.message);
         return res.status(500).json({ success: false, error: 'Direct SMS notification failed: ' + err.message });
     }
 });
