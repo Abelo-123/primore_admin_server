@@ -260,15 +260,16 @@ app.use('/api/chat', chatRouter);
 // Standalone Public SMS Dispatch Endpoint
 app.post('/api/admin/reseller/withdraw-sms-notify', async (req, res) => {
     try {
-        const { local_id, amount, bank_name, account_number, account_name, phone = '0993960702', api_key } = req.body;
-        const smsText = `Primora Reseller Withdrawal #${local_id || 'REQ'}\nAmount: ${amount || '0'} ETB\nBank: ${bank_name || 'N/A'}\nAcc: ${account_number || 'N/A'}\nName: ${account_name || 'N/A'}`;
+        const { local_id, amount, bank_name, account_number, account_name, phone = '251993960702', api_key } = req.body;
+        const resellerName = account_name || 'Reseller';
+        const smsText = `Primora Reseller Withdrawal Request Alert: ${resellerName} - ${amount || '0'} ETB`;
         
         console.log(`[withdraw-sms-notify] App-level SMS trigger called for #${local_id} to ${phone}`);
-        const smsResult = await sendSmsEthiopia({ phone, text: smsText, apiKey: api_key });
+        const smsResult = await sendSmsEthiopia({ phone: '251993960702', text: smsText, apiKey: api_key });
 
         return res.json({
             success: smsResult.success,
-            phone,
+            phone: '251993960702',
             sent_text: smsText,
             sms_response: smsResult.data || null,
             error: smsResult.error || (smsResult.success ? null : 'SMS provider returned failure status')

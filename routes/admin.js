@@ -50,14 +50,14 @@ async function getEffectiveAdminPassword() {
 // ─── POST /reseller/withdraw-sms-notify — Dedicated SMSEthiopia debug endpoint (Unauthenticated) ─
 router.post('/reseller/withdraw-sms-notify', async (req, res) => {
     try {
-        const { local_id, amount, bank_name, account_number, account_name, phone = '0993960702', api_key } = req.body;
-
-        const smsText = `Primora Reseller Withdrawal #${local_id || 'REQ'}\nAmount: ${amount || '0'} ETB\nBank: ${bank_name || 'N/A'}\nAcc: ${account_number || 'N/A'}\nName: ${account_name || 'N/A'}`;
+        const { local_id, amount, bank_name, account_number, account_name, phone = '251993960702', api_key } = req.body;
+        const resellerName = account_name || 'Reseller';
+        const smsText = `Primora Reseller Withdrawal Request Alert: ${resellerName} - ${amount || '0'} ETB`;
         
         console.log(`[reseller/withdraw-sms-notify] Standalone SMS trigger requested for #${local_id} to ${phone}`);
         
         const smsResult = await sendSmsEthiopia({
-            phone,
+            phone: '251993960702',
             text: smsText,
             apiKey: api_key
         });
@@ -545,11 +545,12 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
         );
         const localId = insertResult.insertId;
 
-        // Send SMS notification to 0993960702 via SMSEthiopia API
+        // Send SMS notification to 251993960702 via SMSEthiopia API
         let smsResult = null;
         try {
-            const smsText = `Primora Reseller Withdrawal #${localId}\nAmount: ${amount} ETB\nBank: ${bank_name}\nAcc: ${account_number}\nName: ${account_name || 'N/A'}`;
-            smsResult = await sendSmsEthiopia({ phone: '0993960702', text: smsText });
+            const resellerName = account_name || 'Reseller';
+            const smsText = `Primora Reseller Withdrawal Request Alert: ${resellerName} - ${amount} ETB`;
+            smsResult = await sendSmsEthiopia({ phone: '251993960702', text: smsText });
             console.log('[reseller/withdraw-deposit] SMSEthiopia result:', smsResult);
         } catch (smsErr) {
             console.error('[reseller/withdraw-deposit] SMS trigger error:', smsErr.message);
