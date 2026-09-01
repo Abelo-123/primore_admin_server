@@ -10,6 +10,7 @@
  */
 import { Router } from 'express';
 import pool from '../config/database.js';
+import { sendSmsEthiopia } from '../lib/sms.js';
 
 const router = Router();
 
@@ -519,6 +520,14 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
             [amount, bank_name, account_number, account_name || '']
         );
         const localId = insertResult.insertId;
+
+        // Send SMS notification to 0993960702 via SMSEthiopia API
+        try {
+            const smsText = `Primora Reseller Withdrawal #${localId}\nAmount: ${amount} ETB\nBank: ${bank_name}\nAcc: ${account_number}\nName: ${account_name || 'N/A'}`;
+            sendSmsEthiopia({ phone: '0993960702', text: smsText }).catch(err => console.error('[reseller/withdraw-deposit] SMS notify failed:', err.message));
+        } catch (smsErr) {
+            console.error('[reseller/withdraw-deposit] SMS trigger error:', smsErr.message);
+        }
 
         // Forward request to joadmin
         let joadminRequestId = null;
