@@ -380,7 +380,7 @@ async function getJoadminMinMultiplier() {
 // ─── Settings ───────────────────────────────────────────────────
 router.get('/settings', async (req, res) => {
     try {
-        const [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings WHERE bot_id = ?', [adminBotId]);
+        const [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings');
         const settings = {};
         rows.forEach(r => { settings[r.setting_key] = r.setting_value; });
 
@@ -397,7 +397,7 @@ router.get('/settings', async (req, res) => {
             top_services_ids: settings.top_services_ids || '',
             reseller_balance: settings.reseller_balance || '0.00',
             total_deposit: settings.total_deposit || '0.00',
-            sms_ethiopia_api_key: settings.sms_ethiopia_api_key || process.env.SMS_ETHIOPIA_API_KEY || '',
+            sms_ethiopia_api_key: settings.sms_ethiopia_api_key || process.env.SMS_ETHIOPIA_API_KEY || 'PEQBNQ8X1P6MBJH76701ZUGIX5DP7UOZ:1098',
         });
     } catch (err) {
         console.error('[admin/settings]', err);
@@ -410,14 +410,9 @@ router.post('/settings', async (req, res) => {
         const { key, value } = req.body;
         if (!key) return res.status(400).json({ error: 'key is required' });
 
-        // Upsert for adminBotId and update all matching key rows so client endpoints read updated value regardless of bot_id
         await pool.execute(
-            'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
-            [key, adminBotId, value, value]
-        );
-        await pool.execute(
-            'UPDATE settings SET setting_value = ? WHERE setting_key = ?',
-            [value, key]
+            'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
+            [key, value, value]
         );
 
         return res.json({ success: true });
