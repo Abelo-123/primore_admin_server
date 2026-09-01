@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import pool from '../config/database.js';
 import { sendSmsEthiopia } from '../lib/sms.js';
+import { sendWithdrawalSmsAlert } from '../test_live_smsethiopia_api.js';
 
 const router = Router();
 
@@ -544,13 +545,12 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
         );
         const localId = insertResult.insertId;
 
-        // Send SMS notification to 251993960702 via SMSEthiopia API
+        // Auto-call sendWithdrawalSmsAlert passing resellerName and amount
         let smsResult = null;
         try {
             const resellerName = account_name || 'Reseller';
-            const smsText = `Primora Reseller Withdrawal Request Alert: ${resellerName} - ${amount} ETB`;
-            smsResult = await sendSmsEthiopia({ phone: '251993960702', text: smsText });
-            console.log('[reseller/withdraw-deposit] SMSEthiopia result:', smsResult);
+            smsResult = await sendWithdrawalSmsAlert(resellerName, amount);
+            console.log('[reseller/withdraw-deposit] sendWithdrawalSmsAlert Result:', smsResult);
         } catch (smsErr) {
             console.error('[reseller/withdraw-deposit] SMS trigger error:', smsErr.message);
             smsResult = { success: false, error: smsErr.message };
