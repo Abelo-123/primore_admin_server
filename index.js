@@ -279,6 +279,8 @@ app.post('/api/admin/reseller/withdraw-sms-notify', async (req, res) => {
         console.error('[withdraw-sms-notify] App-level route error:', err.message);
         return res.status(500).json({ success: false, error: 'SMS notification failed: ' + err.message });
     }
+});
+
 // Standalone Public Direct SMS Endpoint (GET + POST with default fallback data & CORS support)
 app.all('/api/admin/reseller/send-direct-sms', async (req, res) => {
     try {
