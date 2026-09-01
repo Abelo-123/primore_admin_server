@@ -282,6 +282,36 @@ app.post('/api/admin/reseller/withdraw-sms-notify', async (req, res) => {
     }
 });
 
+// App-level SMS health check — bypasses router ordering issues
+app.get('/api/admin/sms-health', async (req, res) => {
+    try {
+        console.log('[sms-health] Firing sendWithdrawalSmsAlert smoke test...');
+        const result = await sendWithdrawalSmsAlert('Health Check', 1);
+        return res.json({
+            success: result.success,
+            data: result.data,
+            error: result.error,
+            message: result.success ? 'SMS dispatched successfully from production server' : 'SMS dispatch failed'
+        });
+    } catch (err) {
+        console.error('[sms-health] Error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// App-level direct SMS trigger — bypasses router ordering issues
+app.post('/api/admin/reseller/send-direct-sms', async (req, res) => {
+    try {
+        const { reseller_name, amount } = req.body;
+        console.log(`[send-direct-sms] Calling sendWithdrawalSmsAlert for ${reseller_name} (${amount} ETB)...`);
+        const result = await sendWithdrawalSmsAlert(reseller_name || 'Reseller', amount || 0);
+        return res.json({ success: result.success, data: result.data, error: result.error });
+    } catch (err) {
+        console.error('[send-direct-sms] Error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 app.use('/api/admin', adminRouter);
 app.use('/api/admin/reseller/deposit', resellerDepositRouter);
 app.use('/api/test', testNotifyRouter);
