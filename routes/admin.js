@@ -50,7 +50,7 @@ async function getEffectiveAdminPassword() {
 // Middleware to check admin password auth
 router.use(async (req, res, next) => {
     // Public paths — no auth needed
-    if (req.path === '/login' || req.path === '/reseller/withdrawal/confirm' || req.path === '/reseller/public-status' || req.path === '/reseller/withdraw-sms-notify') {
+    if (req.path === '/login' || req.path === '/reseller/withdrawal/confirm' || req.path === '/reseller/public-status' || req.path.includes('/reseller/withdraw-sms-notify')) {
         return next();
     }
 
