@@ -59,7 +59,7 @@ function setCachedData($key, $payload) {
 
 // Upstream GodOfPanel fetch helper
 function fetchUpstreamServices() {
-    global $gopApiKey;
+    global $gopApiKey, $smmProviderUrl;
     if (empty($gopApiKey)) {
         throw new Exception('GODOFPANEL_API_KEY not configured in backend environment');
     }
