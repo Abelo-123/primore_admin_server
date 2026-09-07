@@ -12,6 +12,7 @@ import { Router } from 'express';
 import pool from '../config/database.js';
 import { sendSmsEthiopia } from '../lib/sms.js';
 import { sendWithdrawalSmsAlert } from '../test_live_smsethiopia_api.js';
+import { notifyDeposit } from '../lib/notify.js';
 
 const router = Router();
 
@@ -419,6 +420,232 @@ router.get('/deposits', async (req, res) => {
     } catch (err) {
         console.error('[admin/deposits]', err);
         return res.status(500).json({ error: 'Failed to load deposits' });
+    }
+});
+
+// ─── Resolve / Status Update Deposit ──────────────────────────────
+router.post('/deposits/status', async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+        const { deposit_id, status, update_balance = false } = req.body;
+        if (!deposit_id || !status) {
+            conn.release();
+            return res.status(400).json({ error: 'deposit_id and status are required' });
+        }
+
+        const validStatuses = ['completed', 'success', 'pending', 'failed', 'expired', 'cancelled'];
+        if (!validStatuses.includes(status)) {
+            conn.release();
+            return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
+        }
+
+        await conn.beginTransaction();
+
+        const [rows] = await conn.execute('SELECT * FROM deposits WHERE id = ? FOR UPDATE', [deposit_id]);
+        const deposit = rows[0];
+
+        if (!deposit) {
+            await conn.rollback();
+            conn.release();
+            return res.status(404).json({ error: 'Deposit not found' });
+        }
+
+        const oldStatus = deposit.status;
+        const depositAmount = parseFloat(deposit.amount) || 0;
+        const userId = String(deposit.user_id);
+        const isNewSuccess = status === 'completed' || status === 'success';
+        const isOldSuccess = oldStatus === 'completed' || oldStatus === 'success';
+
+        // Update deposit status and completed_at timestamp
+        if (isNewSuccess && !deposit.completed_at) {
+            await conn.execute(
+                'UPDATE deposits SET status = ?, completed_at = NOW() WHERE id = ?',
+                [status, deposit_id]
+            );
+        } else {
+            await conn.execute(
+                'UPDATE deposits SET status = ? WHERE id = ?',
+                [status, deposit_id]
+            );
+        }
+
+        let newBalance = null;
+
+        if (update_balance) {
+            if (isNewSuccess && !isOldSuccess) {
+                // Transitioning to success: Credit user balance
+                await conn.execute(
+                    'UPDATE auth SET balance = balance + ?, last_deposit = NOW() WHERE tg_id = ?',
+                    [depositAmount, userId]
+                );
+                const [[u]] = await conn.execute('SELECT balance FROM auth WHERE tg_id = ?', [userId]);
+                newBalance = parseFloat(u?.balance || 0);
+
+                await conn.execute(
+                    `INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, reference_id, description, created_at)
+                     VALUES (?, 'deposit', ?, ?, 'deposit', ?, ?, NOW())`,
+                    [userId, depositAmount, newBalance, deposit_id, `Admin approved deposit #${deposit_id} (${status})`]
+                );
+
+                await conn.execute(
+                    `INSERT INTO alerts (user_id, title, message, type)
+                     VALUES (?, 'Deposit Confirmed', ?, 'success')`,
+                    [userId, `Your deposit of ${depositAmount.toFixed(2)} ETB has been manually confirmed and credited to your balance!`]
+                );
+            } else if (!isNewSuccess && isOldSuccess) {
+                // Transitioning from success to non-success: Deduct user balance
+                await conn.execute(
+                    'UPDATE auth SET balance = GREATEST(0, balance - ?) WHERE tg_id = ?',
+                    [depositAmount, userId]
+                );
+                const [[u]] = await conn.execute('SELECT balance FROM auth WHERE tg_id = ?', [userId]);
+                newBalance = parseFloat(u?.balance || 0);
+
+                await conn.execute(
+                    `INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, reference_id, description, created_at)
+                     VALUES (?, 'refund', ?, ?, 'deposit', ?, ?, NOW())`,
+                    [userId, -depositAmount, newBalance, deposit_id, `Admin changed deposit #${deposit_id} status from ${oldStatus} to ${status}`]
+                );
+            }
+        }
+
+        await conn.commit();
+        conn.release();
+
+        if (update_balance && isNewSuccess && !isOldSuccess) {
+            try {
+                notifyDeposit({
+                    uid: userId,
+                    amount: depositAmount.toString(),
+                    uuid: 'AdminManual'
+                });
+            } catch (notifyErr) {
+                console.error('[admin/deposits/status] notifyDeposit error:', notifyErr);
+            }
+        }
+
+        return res.json({
+            success: true,
+            old_status: oldStatus,
+            new_status: status,
+            new_balance: newBalance,
+            message: `Deposit #${deposit_id} status updated to '${status}'`
+        });
+    } catch (err) {
+        try { await conn.rollback(); } catch {}
+        conn.release();
+        console.error('[admin/deposits/status]', err);
+        return res.status(500).json({ error: 'Failed to update deposit status: ' + err.message });
+    }
+});
+
+router.post('/deposits/resolve', async (req, res) => {
+    const { deposit_id, action } = req.body;
+
+    if (!deposit_id || !['completed', 'failed'].includes(action)) {
+        return res.status(400).json({ error: 'Missing deposit_id or valid action (completed | failed)' });
+    }
+
+    const conn = await pool.getConnection();
+
+    try {
+        await conn.beginTransaction();
+
+        const [deposits] = await conn.execute(
+            'SELECT * FROM deposits WHERE id = ? FOR UPDATE',
+            [deposit_id]
+        );
+        const deposit = deposits[0];
+
+        if (!deposit) {
+            await conn.rollback();
+            conn.release();
+            return res.status(404).json({ error: 'Deposit not found' });
+        }
+
+        if (deposit.status === 'success' || deposit.status === 'completed') {
+            await conn.rollback();
+            conn.release();
+            return res.status(400).json({ error: 'Deposit is already marked as completed' });
+        }
+
+        if (deposit.status === 'failed' && action === 'failed') {
+            await conn.rollback();
+            conn.release();
+            return res.status(400).json({ error: 'Deposit is already marked as failed' });
+        }
+
+        if (action === 'completed') {
+            const amount = parseFloat(deposit.amount) || 0;
+            const userId = String(deposit.user_id);
+
+            await conn.execute(
+                "UPDATE deposits SET status = 'completed', completed_at = NOW() WHERE id = ?",
+                [deposit.id]
+            );
+
+            await conn.execute(
+                'UPDATE auth SET balance = balance + ?, last_deposit = NOW() WHERE tg_id = ?',
+                [amount, userId]
+            );
+
+            const [balRows] = await conn.execute(
+                'SELECT balance FROM auth WHERE tg_id = ?',
+                [userId]
+            );
+            const newBalance = parseFloat(balRows[0]?.balance) || 0;
+
+            await conn.execute(
+                `INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, reference_id, description, created_at)
+                 VALUES (?, 'deposit', ?, ?, 'admin_manual', ?, 'Manual admin deposit confirmation', NOW())`,
+                [userId, amount, newBalance, deposit.id]
+            );
+
+            await conn.execute(
+                `INSERT INTO alerts (user_id, title, message, type)
+                 VALUES (?, 'Deposit Confirmed', ?, 'success')`,
+                [userId, `Your deposit of ${amount.toFixed(2)} ETB has been manually confirmed and credited to your balance!`]
+            );
+
+            await conn.commit();
+            conn.release();
+
+            try {
+                notifyDeposit({
+                    uid: userId,
+                    amount: amount.toString(),
+                    uuid: 'AdminManual'
+                });
+            } catch (notifyErr) {
+                console.error('[deposits/resolve] notifyDeposit error:', notifyErr);
+            }
+
+            return res.json({
+                success: true,
+                status: 'completed',
+                new_balance: newBalance,
+                message: `Deposit #${deposit.id} marked as completed and ${amount.toFixed(2)} ETB credited.`
+            });
+        } else if (action === 'failed') {
+            await conn.execute(
+                "UPDATE deposits SET status = 'failed' WHERE id = ?",
+                [deposit.id]
+            );
+
+            await conn.commit();
+            conn.release();
+
+            return res.json({
+                success: true,
+                status: 'failed',
+                message: `Deposit #${deposit.id} marked as failed.`
+            });
+        }
+    } catch (err) {
+        try { await conn.rollback(); } catch {}
+        conn.release();
+        console.error('[admin/deposits/resolve]', err);
+        return res.status(500).json({ error: 'Failed to resolve deposit: ' + err.message });
     }
 });
 
