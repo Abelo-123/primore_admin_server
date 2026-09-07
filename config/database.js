@@ -9,7 +9,6 @@ console.log('[admin-db] DB_USER:', process.env.DB_USER);
 console.log('[admin-db] DB_PASS:', process.env.DB_PASS ? '***' : '(empty)');
 console.log('[admin-db] DB_NAME:', process.env.DB_NAME);
 
-// When running ON the cPanel server, host is always localhost unless DB_HOST is configured
 const pool = mysql.createPool({
     host: process.env.DB_HOST || 'localhost', 
     user: process.env.DB_USER,
@@ -22,18 +21,15 @@ const pool = mysql.createPool({
     queueLimit: 0,
 });
 
-// TEST CONNECTION AND LOG ERRORS
+// TEST CONNECTION AND INITIALIZATION
 pool.getConnection()
     .then(async conn => {
         console.log('✅ DB Connected');
         try {
-            // Recreate chat_messages table with correct schema
-            await conn.execute(`DROP TABLE IF EXISTS chat_messages`);
             await conn.execute(`
-                CREATE TABLE chat_messages (
+                CREATE TABLE IF NOT EXISTS chat_messages (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     user_id VARCHAR(50) NOT NULL,
-                    bot_id VARCHAR(50) DEFAULT NULL,
                     message TEXT NOT NULL,
                     is_admin TINYINT(1) DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -41,13 +37,12 @@ pool.getConnection()
             `);
             console.log('✅ chat_messages table ready');
         } catch (e) {
-            console.error('❌ Failed to create chat_messages table', e);
+            console.error('❌ Failed to verify chat_messages table', e.message);
         }
         conn.release();
     })
     .catch(err => {
         console.error('❌ DB CONNECTION ERROR:', err.message);
-        console.error('   Check if user is assigned to DB in cPanel with All Privileges.');
     });
 
 export default pool;

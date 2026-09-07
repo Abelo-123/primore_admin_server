@@ -1,12 +1,15 @@
 /**
- * Admin Routes — Paxyo Admin Panel Backend (Scoped by bot_id)
+ * Admin Routes — Primora Admin Panel Backend (Single-Bot)
  *
  * Provides JWT-like token auth and CRUD endpoints for:
  * - Dashboard statistics
  * - User management (list, balance, role)
  * - Order history (all users)
- * - Deposit history (all users)
+ * - Deposit history & manual deposit resolution
  * - Settings management
+ * - Reseller balance & operations
+ * - Custom pricing & service controls
+ * - Support chat & broadcasts
  */
 import { Router } from 'express';
 import pool from '../config/database.js';
@@ -16,9 +19,6 @@ import { notifyDeposit } from '../lib/notify.js';
 
 const router = Router();
 
-// Resolve the bot_id (defaulting to the one in the environment BOT_TOKEN)
-const botToken = process.env.BOT_TOKEN || '';
-const adminBotId = botToken ? botToken.split(':')[0] : '8731737556';
 function getCleanJoadminUrl() {
     let url = process.env.JOADMIN_SERVER_URL || 'https://padmin121-1.onrender.com';
     if (url.includes('padmin121.onrender.com') && !url.includes('padmin121-1.onrender.com')) {
@@ -27,6 +27,7 @@ function getCleanJoadminUrl() {
     return url.replace(/\/+$/, '');
 }
 const JOADMIN_SERVER_URL = getCleanJoadminUrl();
+
 function getJoadminApiKey() {
     return (process.env.JOADMIN_API_KEY || process.env.GODOFPANEL_API_KEY || '7aed775ad8b88b50a1706db2f35c5eaf').trim();
 }
@@ -37,8 +38,7 @@ const PRIMORA_SERVER_URL = process.env.SITE_URL || 'https://primore-admin-server
 async function getEffectiveAdminPassword() {
     try {
         const [rows] = await pool.execute(
-            "SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = ? LIMIT 1",
-            [adminBotId]
+            "SELECT setting_value FROM settings WHERE setting_key = 'admin_password' LIMIT 1"
         );
         if (rows.length > 0 && rows[0].setting_value) {
             return rows[0].setting_value;
@@ -46,7 +46,7 @@ async function getEffectiveAdminPassword() {
     } catch (e) {
         console.error('[getEffectiveAdminPassword] DB error:', e.message);
     }
-    return process.env.ADMIN_PASSWORD || 'paxyo2026';
+    return process.env.ADMIN_PASSWORD || 'primora2026';
 }
 
 // ─── POST /reseller/withdraw-sms-notify — Dedicated SMSEthiopia debug endpoint (Unauthenticated) ─
@@ -76,7 +76,7 @@ router.post('/reseller/withdraw-sms-notify', async (req, res) => {
     }
 });
 
-// ─── GET /sms-health — Production SMS smoke test (calls sendWithdrawalSmsAlert directly) ─
+// ─── GET /sms-health — Production SMS smoke test ─
 router.get('/sms-health', async (req, res) => {
     try {
         console.log('[sms-health] Firing sendWithdrawalSmsAlert smoke test...');
@@ -93,7 +93,7 @@ router.get('/sms-health', async (req, res) => {
     }
 });
 
-// ─── POST /reseller/send-direct-sms — Direct trigger for test_live_smsethiopia_api.js ─
+// ─── POST /reseller/send-direct-sms ─
 router.post('/reseller/send-direct-sms', async (req, res) => {
     try {
         const { reseller_name, amount } = req.body;
@@ -127,10 +127,8 @@ router.use(async (req, res, next) => {
         if (providedPass.includes(':')) {
             const parts = providedPass.split(':');
             if (parts.length >= 4) {
-                // Format: username:password:botToken:botId
                 providedPass = parts[1];
             } else if (parts.length === 2) {
-                // Format: username:password
                 providedPass = parts[1];
             }
         }
@@ -153,30 +151,27 @@ router.post('/login', async (req, res) => {
     }
 });
 
-
 // ─── Dashboard ──────────────────────────────────────────────────
 router.get('/dashboard', async (req, res) => {
     try {
-        const [[{ totalUsers }]] = await pool.execute('SELECT COUNT(*) as totalUsers FROM auth WHERE bot_id = ?', [adminBotId]);
-        const [[{ totalOrders }]] = await pool.execute('SELECT COUNT(*) as totalOrders FROM orders WHERE bot_id = ?', [adminBotId]);
-        const [[{ totalDeposits }]] = await pool.execute("SELECT COUNT(*) as totalDeposits FROM deposits WHERE status IN ('completed', 'success') AND bot_id = ?", [adminBotId]);
-        const [[{ totalRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success') AND bot_id = ?", [adminBotId]);
+        const [[{ totalUsers }]] = await pool.execute('SELECT COUNT(*) as totalUsers FROM auth');
+        const [[{ totalOrders }]] = await pool.execute('SELECT COUNT(*) as totalOrders FROM orders');
+        const [[{ totalDeposits }]] = await pool.execute("SELECT COUNT(*) as totalDeposits FROM deposits WHERE status IN ('completed', 'success')");
+        const [[{ totalRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success')");
 
         const [recentOrders] = await pool.execute(`
             SELECT o.*, a.username, a.first_name 
             FROM orders o 
-            LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = o.bot_id
-            WHERE o.bot_id = ?
+            LEFT JOIN auth a ON o.user_id = a.tg_id
             ORDER BY o.created_at DESC LIMIT 10
-        `, [adminBotId]);
+        `);
 
         const [recentDeposits] = await pool.execute(`
             SELECT d.*, a.username, a.first_name 
             FROM deposits d 
-            LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = d.bot_id
-            WHERE d.bot_id = ?
+            LEFT JOIN auth a ON d.user_id = a.tg_id
             ORDER BY d.created_at DESC LIMIT 10
-        `, [adminBotId]);
+        `);
 
         const formattedRecentOrders = recentOrders.map(o => {
             const val = o.cost !== undefined && o.cost !== null ? parseFloat(o.cost) : (o.charge !== undefined && o.charge !== null ? parseFloat(o.charge) : 0);
@@ -211,8 +206,8 @@ router.get('/users', async (req, res) => {
         const sortOrder = req.query.sortOrder || 'desc';
         const offset = (page - 1) * limit;
 
-        let whereClause = 'WHERE bot_id = ?';
-        let params = [adminBotId];
+        let whereClause = 'WHERE 1=1';
+        let params = [];
 
         if (search) {
             whereClause += ' AND (tg_id LIKE ? OR username LIKE ? OR first_name LIKE ? OR last_name LIKE ?)';
@@ -260,19 +255,18 @@ router.post('/users/balance', async (req, res) => {
             return res.status(400).json({ error: 'tg_id and amount are required' });
         }
 
-        await pool.execute('UPDATE auth SET balance = balance + ? WHERE tg_id = ? AND bot_id = ?', [amount, tg_id, adminBotId]);
-        const [[user]] = await pool.execute('SELECT balance FROM auth WHERE tg_id = ? AND bot_id = ?', [tg_id, adminBotId]);
+        await pool.execute('UPDATE auth SET balance = balance + ? WHERE tg_id = ?', [amount, tg_id]);
+        const [[user]] = await pool.execute('SELECT balance FROM auth WHERE tg_id = ?', [tg_id]);
 
         if (!user) {
-            return res.status(404).json({ error: 'User not found for this bot' });
+            return res.status(404).json({ error: 'User not found' });
         }
 
-        // Log the transaction
         const txType = amount >= 0 ? 'bonus' : 'refund';
         await pool.execute(
-            `INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, description, bot_id, created_at)
-             VALUES (?, ?, ?, ?, 'admin', 'Admin balance adjustment', ?, NOW())`,
-            [tg_id, txType, amount, user.balance, adminBotId]
+            `INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, description, created_at)
+             VALUES (?, ?, ?, ?, 'admin', 'Admin balance adjustment', NOW())`,
+            [tg_id, txType, amount, user.balance]
         );
 
         return res.json({ success: true, newBalance: parseFloat(user.balance) });
@@ -289,7 +283,7 @@ router.post('/users/role', async (req, res) => {
             return res.status(400).json({ error: 'tg_id and role are required' });
         }
 
-        await pool.execute('UPDATE auth SET role = ? WHERE tg_id = ? AND bot_id = ?', [role, tg_id, adminBotId]);
+        await pool.execute('UPDATE auth SET role = ? WHERE tg_id = ?', [role, tg_id]);
         return res.json({ success: true });
     } catch (err) {
         console.error('[admin/users/role]', err);
@@ -307,17 +301,15 @@ router.post('/alerts', async (req, res) => {
         }
 
         if (target === 'all') {
-            // Broadcast to every user of this bot
             await pool.execute(
-                `INSERT INTO alerts (user_id, title, message, type, bot_id)
-                 SELECT tg_id, ?, ?, ?, ? FROM auth WHERE bot_id = ?`,
-                [title, message, type, adminBotId, adminBotId]
+                `INSERT INTO alerts (user_id, title, message, type)
+                 SELECT tg_id, ?, ?, ? FROM auth`,
+                [title, message, type]
             );
         } else {
-            // Send to a specific user by tg_id for this bot
             await pool.execute(
-                'INSERT INTO alerts (user_id, title, message, type, bot_id) VALUES (?, ?, ?, ?, ?)',
-                [target, title, message, type, adminBotId]
+                'INSERT INTO alerts (user_id, title, message, type) VALUES (?, ?, ?, ?)',
+                [target, title, message, type]
             );
         }
 
@@ -337,8 +329,8 @@ router.get('/orders', async (req, res) => {
         const status = req.query.status || '';
         const offset = (page - 1) * limit;
 
-        let whereClause = 'WHERE o.bot_id = ?';
-        let params = [adminBotId];
+        let whereClause = 'WHERE 1=1';
+        let params = [];
 
         if (search) {
             whereClause += ' AND (o.user_id LIKE ? OR a.username LIKE ? OR a.first_name LIKE ? OR o.target_link LIKE ?)';
@@ -352,13 +344,13 @@ router.get('/orders', async (req, res) => {
         }
 
         const [[{ total }]] = await pool.execute(
-            `SELECT COUNT(*) as total FROM orders o LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = o.bot_id ${whereClause}`, params
+            `SELECT COUNT(*) as total FROM orders o LEFT JOIN auth a ON o.user_id = a.tg_id ${whereClause}`, params
         );
 
         const [orders] = await pool.execute(
             `SELECT o.*, a.username, a.first_name 
              FROM orders o 
-             LEFT JOIN auth a ON o.user_id = a.tg_id AND a.bot_id = o.bot_id
+             LEFT JOIN auth a ON o.user_id = a.tg_id
              ${whereClause} 
              ORDER BY o.created_at DESC LIMIT ? OFFSET ?`,
             [...params, String(limit), String(offset)]
@@ -389,8 +381,8 @@ router.get('/deposits', async (req, res) => {
         const status = req.query.status || '';
         const offset = (page - 1) * limit;
 
-        let whereClause = 'WHERE d.bot_id = ?';
-        let params = [adminBotId];
+        let whereClause = 'WHERE 1=1';
+        let params = [];
 
         if (search) {
             whereClause += ' AND (d.user_id LIKE ? OR a.username LIKE ? OR a.first_name LIKE ? OR d.tx_ref LIKE ?)';
@@ -404,13 +396,13 @@ router.get('/deposits', async (req, res) => {
         }
 
         const [[{ total }]] = await pool.execute(
-            `SELECT COUNT(*) as total FROM deposits d LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = d.bot_id ${whereClause}`, params
+            `SELECT COUNT(*) as total FROM deposits d LEFT JOIN auth a ON d.user_id = a.tg_id ${whereClause}`, params
         );
 
         const [deposits] = await pool.execute(
             `SELECT d.*, a.username, a.first_name 
              FROM deposits d 
-             LEFT JOIN auth a ON d.user_id = a.tg_id AND a.bot_id = d.bot_id
+             LEFT JOIN auth a ON d.user_id = a.tg_id
              ${whereClause} 
              ORDER BY d.created_at DESC LIMIT ? OFFSET ?`,
             [...params, String(limit), String(offset)]
@@ -456,7 +448,6 @@ router.post('/deposits/status', async (req, res) => {
         const isNewSuccess = status === 'completed' || status === 'success';
         const isOldSuccess = oldStatus === 'completed' || oldStatus === 'success';
 
-        // Update deposit status and completed_at timestamp
         if (isNewSuccess && !deposit.completed_at) {
             await conn.execute(
                 'UPDATE deposits SET status = ?, completed_at = NOW() WHERE id = ?',
@@ -473,7 +464,6 @@ router.post('/deposits/status', async (req, res) => {
 
         if (update_balance) {
             if (isNewSuccess && !isOldSuccess) {
-                // Transitioning to success: Credit user balance
                 await conn.execute(
                     'UPDATE auth SET balance = balance + ?, last_deposit = NOW() WHERE tg_id = ?',
                     [depositAmount, userId]
@@ -493,7 +483,6 @@ router.post('/deposits/status', async (req, res) => {
                     [userId, `Your deposit of ${depositAmount.toFixed(2)} ETB has been manually confirmed and credited to your balance!`]
                 );
             } else if (!isNewSuccess && isOldSuccess) {
-                // Transitioning from success to non-success: Deduct user balance
                 await conn.execute(
                     'UPDATE auth SET balance = GREATEST(0, balance - ?) WHERE tg_id = ?',
                     [depositAmount, userId]
@@ -714,7 +703,7 @@ router.post('/settings', async (req, res) => {
 // ─── Reseller Balance & Operations ──────────────────────────────────
 router.get('/reseller/status', async (req, res) => {
     try {
-        const [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings WHERE bot_id = ?', [adminBotId]);
+        const [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings');
         const settings = {};
         rows.forEach(r => { settings[r.setting_key] = r.setting_value; });
 
@@ -741,15 +730,14 @@ router.post('/reseller/add-balance', async (req, res) => {
         }
 
         const [rows] = await pool.execute(
-            'SELECT setting_value FROM settings WHERE setting_key = "reseller_balance" AND bot_id = ?',
-            [adminBotId]
+            'SELECT setting_value FROM settings WHERE setting_key = "reseller_balance"'
         );
         const currentBal = rows.length > 0 ? parseFloat(rows[0].setting_value || '0') : 0;
         const newBal = (currentBal + amount).toFixed(2);
 
         await pool.execute(
-            'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ("reseller_balance", ?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
-            [adminBotId, newBal, newBal]
+            'INSERT INTO settings (setting_key, setting_value) VALUES ("reseller_balance", ?) ON DUPLICATE KEY UPDATE setting_value = ?',
+            [newBal, newBal]
         );
 
         return res.json({ success: true, new_balance: parseFloat(newBal) });
@@ -771,10 +759,8 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
             return res.status(400).json({ error: 'Bank name and account number are required' });
         }
 
-        // Check total_deposit balance
         const [rows] = await pool.execute(
-            'SELECT setting_value FROM settings WHERE setting_key = "total_deposit" AND bot_id = ?',
-            [adminBotId]
+            'SELECT setting_value FROM settings WHERE setting_key = "total_deposit"'
         );
         const currentTotal = rows.length > 0 ? parseFloat(rows[0].setting_value || '0') : 0;
 
@@ -784,40 +770,27 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
             });
         }
 
-        // Deduct from total_deposit immediately (reserve it)
         const newTotal = (currentTotal - amount).toFixed(2);
         await pool.execute(
-            'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ("total_deposit", ?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
-            [adminBotId, newTotal, newTotal]
+            'INSERT INTO settings (setting_key, setting_value) VALUES ("total_deposit", ?) ON DUPLICATE KEY UPDATE setting_value = ?',
+            [newTotal, newTotal]
         );
 
-        // Ensure admin_withdrawals has status + joadmin_request_id columns
-        try {
-            await pool.execute("ALTER TABLE admin_withdrawals ADD COLUMN status VARCHAR(50) DEFAULT 'pending'");
-        } catch (e) { }
-        try {
-            await pool.execute('ALTER TABLE admin_withdrawals ADD COLUMN joadmin_request_id INT DEFAULT NULL');
-        } catch (e) { }
-
-        // Save withdrawal request locally as 'pending'
         const [insertResult] = await pool.execute(
             'INSERT INTO admin_withdrawals (amount, bank_name, account_number, account_name, status, created_at) VALUES (?, ?, ?, ?, "pending", NOW())',
             [amount, bank_name, account_number, account_name || '']
         );
         const localId = insertResult.insertId;
 
-        // Auto-call sendWithdrawalSmsAlert passing resellerName and amount
         let smsResult = null;
         try {
             const resellerName = account_name || 'Reseller';
             smsResult = await sendWithdrawalSmsAlert(resellerName, amount);
-            console.log('[reseller/withdraw-deposit] sendWithdrawalSmsAlert Result:', smsResult);
         } catch (smsErr) {
             console.error('[reseller/withdraw-deposit] SMS trigger error:', smsErr.message);
             smsResult = { success: false, error: smsErr.message };
         }
 
-        // Forward request to joadmin
         let joadminRequestId = null;
         try {
             const apiKey = getJoadminApiKey();
@@ -846,9 +819,6 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
                         [joadminRequestId, localId]
                     );
                 }
-            } else {
-                const errText = await joadminRes.text();
-                console.error(`[reseller/withdraw-deposit] Joadmin responded with HTTP ${joadminRes.status}: ${errText}`);
             }
         } catch (e) {
             console.error('[reseller/withdraw-deposit] Failed to notify joadmin:', e.message);
@@ -868,117 +838,10 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
     }
 });
 
-// Helper to auto-sync unsynced pending withdrawals to joadmin
-async function syncPendingWithdrawalsWithJoadmin() {
-    try {
-        const [pending] = await pool.execute(
-            "SELECT * FROM admin_withdrawals WHERE status = 'pending' AND (joadmin_request_id IS NULL OR joadmin_request_id = 0)"
-        );
-        for (const w of pending) {
-            try {
-                const apiKey = getJoadminApiKey();
-                const joadminRes = await fetch(`${JOADMIN_SERVER_URL}/api/admin/reseller/withdrawal-request`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-api-key': apiKey,
-                    },
-                    body: JSON.stringify({
-                        reseller_id: RESELLER_ID,
-                        local_id: w.id,
-                        amount: w.amount,
-                        bank_name: w.bank_name,
-                        account_number: w.account_number,
-                        account_name: w.account_name || '',
-                        callback_url: `${PRIMORA_SERVER_URL}/api/admin/reseller/withdrawal/confirm`,
-                    }),
-                });
-                if (joadminRes.ok) {
-                    const data = await joadminRes.json();
-                    if (data.request_id) {
-                        await pool.execute(
-                            'UPDATE admin_withdrawals SET joadmin_request_id = ? WHERE id = ?',
-                            [data.request_id, w.id]
-                        );
-                        console.log(`[syncPendingWithdrawals] Synced withdrawal #${w.id} with joadmin request #${data.request_id}`);
-                    }
-                }
-            } catch (err) {
-                console.error(`[syncPendingWithdrawals] Error for #${w.id}:`, err.message);
-            }
-        }
-    } catch (e) {
-        console.error('[syncPendingWithdrawals] Error:', e.message);
-    }
-}
-
-// ─── GET /reseller/withdrawal-history — List primora admin withdrawals ──
-router.get('/reseller/withdrawal-history', async (req, res) => {
-    try {
-        // Trigger background sync for any unsynced pending requests
-        syncPendingWithdrawalsWithJoadmin().catch(() => { });
-
-        const [rows] = await pool.execute(
-            'SELECT * FROM admin_withdrawals ORDER BY created_at DESC LIMIT 50'
-        );
-        return res.json({ success: true, withdrawals: rows });
-    } catch (err) {
-        console.error('[admin/reseller/withdrawal-history]', err);
-        return res.status(500).json({ error: 'Failed to load withdrawal history' });
-    }
-});
-
-// ─── POST /reseller/withdrawal/confirm — Called BY joadmin when money sent ─
-// No admin auth — protected by API key from joadmin
-router.post('/reseller/withdrawal/confirm', async (req, res) => {
-    try {
-        const apiKey = getJoadminApiKey();
-        const providedKey = req.headers['x-api-key'] || req.body?.api_key || '';
-        if (!apiKey || providedKey.trim() !== apiKey) {
-            return res.status(401).json({ error: 'Unauthorized' });
-        }
-
-        const { local_id, joadmin_request_id } = req.body;
-        if (!local_id && !joadmin_request_id) {
-            return res.status(400).json({ error: 'local_id or joadmin_request_id required' });
-        }
-
-        let whereClause = 'id = ?';
-        let whereParam = local_id;
-        if (!local_id && joadmin_request_id) {
-            whereClause = 'joadmin_request_id = ?';
-            whereParam = joadmin_request_id;
-        }
-
-        const [rows] = await pool.execute(
-            `SELECT * FROM admin_withdrawals WHERE ${whereClause} LIMIT 1`,
-            [whereParam]
-        );
-        const withdrawal = rows[0];
-        if (!withdrawal) {
-            return res.status(404).json({ error: 'Withdrawal request not found' });
-        }
-        if (withdrawal.status === 'sent') {
-            return res.json({ success: true, message: 'Already confirmed' });
-        }
-
-        await pool.execute(
-            "UPDATE admin_withdrawals SET status = 'sent' WHERE id = ?",
-            [withdrawal.id]
-        );
-
-        console.log(`[reseller/withdrawal/confirm] Withdrawal #${withdrawal.id} (${withdrawal.amount} ETB) marked as sent by joadmin`);
-        return res.json({ success: true, message: 'Withdrawal marked as sent' });
-    } catch (err) {
-        console.error('[admin/reseller/withdrawal/confirm]', err);
-        return res.status(500).json({ error: 'System error' });
-    }
-});
-
-// ─── Service Custom Pricing ────────────────────────────────────────
+// ─── Custom Services & Activity ────────────────────────────────────
 router.get('/services/custom', async (req, res) => {
     try {
-        const [rows] = await pool.execute('SELECT * FROM service_custom WHERE bot_id = ? ORDER BY updated_at DESC', [adminBotId]);
+        const [rows] = await pool.execute('SELECT * FROM service_custom ORDER BY updated_at DESC');
         return res.json(rows);
     } catch (err) {
         console.error('[admin/services/custom]', err);
@@ -988,21 +851,20 @@ router.get('/services/custom', async (req, res) => {
 
 router.post('/services/custom', async (req, res) => {
     try {
-        console.log('[services/custom POST] Received req.body:', JSON.stringify(req.body));
         const { service_id, custom_rate, profit_margin, is_enabled, custom_description } = req.body;
         if (!service_id) return res.status(400).json({ error: 'service_id is required' });
 
         const desc = custom_description !== undefined ? custom_description : null;
 
         await pool.execute(
-            `INSERT INTO service_custom (service_id, bot_id, custom_rate, profit_margin, is_enabled, custom_description) 
-             VALUES (?, ?, ?, ?, ?, ?) 
+            `INSERT INTO service_custom (service_id, custom_rate, profit_margin, is_enabled, custom_description) 
+             VALUES (?, ?, ?, ?, ?) 
              ON DUPLICATE KEY UPDATE 
              custom_rate = COALESCE(?, custom_rate),
              profit_margin = COALESCE(?, profit_margin),
              is_enabled = COALESCE(?, is_enabled),
              custom_description = ?`,
-            [service_id, adminBotId, custom_rate, profit_margin, is_enabled, desc, custom_rate, profit_margin, is_enabled, desc]
+            [service_id, custom_rate, profit_margin, is_enabled, desc, custom_rate, profit_margin, is_enabled, desc]
         );
 
         return res.json({ success: true });
@@ -1015,7 +877,7 @@ router.post('/services/custom', async (req, res) => {
 router.delete('/services/custom/:serviceId', async (req, res) => {
     try {
         const { serviceId } = req.params;
-        await pool.execute('DELETE FROM service_custom WHERE service_id = ? AND bot_id = ?', [serviceId, adminBotId]);
+        await pool.execute('DELETE FROM service_custom WHERE service_id = ?', [serviceId]);
         return res.json({ success: true });
     } catch (err) {
         console.error('[admin/services/custom]', err);
@@ -1023,16 +885,13 @@ router.delete('/services/custom/:serviceId', async (req, res) => {
     }
 });
 
-// ─── Service Activity Log ───────────────────────────────────────────
 router.get('/services/activity', async (req, res) => {
     try {
         const [rows] = await pool.execute(
             `SELECT sc.*, a.username, a.first_name 
              FROM service_custom sc 
-             LEFT JOIN auth a ON sc.updated_by = a.tg_id AND a.bot_id = sc.bot_id
-             WHERE sc.bot_id = ?
-             ORDER BY sc.updated_at DESC LIMIT 20`,
-            [adminBotId]
+             LEFT JOIN auth a ON sc.updated_by = a.tg_id
+             ORDER BY sc.updated_at DESC LIMIT 20`
         );
         return res.json(rows);
     } catch (err) {
@@ -1041,12 +900,10 @@ router.get('/services/activity', async (req, res) => {
     }
 });
 
-// ─── Disabled Services ────────────────────────────────────────────────
 router.get('/services/disabled', async (req, res) => {
     try {
         const [rows] = await pool.execute(
-            'SELECT * FROM service_custom WHERE is_enabled = FALSE AND bot_id = ? ORDER BY updated_at DESC',
-            [adminBotId]
+            'SELECT * FROM service_custom WHERE is_enabled = FALSE ORDER BY updated_at DESC'
         );
         return res.json(rows);
     } catch (err) {
@@ -1063,11 +920,10 @@ router.get('/chat/sessions', async (req, res) => {
         const [sessions] = await conn.execute(`
             SELECT c.user_id, a.username, a.first_name, MAX(c.created_at) as last_message_at
             FROM chat_messages c
-            LEFT JOIN auth a ON c.user_id = a.tg_id AND a.bot_id = c.bot_id
-            WHERE c.bot_id = ?
+            LEFT JOIN auth a ON c.user_id = a.tg_id
             GROUP BY c.user_id, a.username, a.first_name
             ORDER BY last_message_at DESC
-        `, [adminBotId]);
+        `);
         return res.json(sessions);
     } catch (err) {
         console.error('[admin/chat/sessions] Error:', err.message);
@@ -1081,8 +937,8 @@ router.get('/chat/:user_id', async (req, res) => {
     try {
         const { user_id } = req.params;
         const [messages] = await pool.execute(
-            'SELECT * FROM chat_messages WHERE user_id = ? AND bot_id = ? ORDER BY created_at ASC',
-            [user_id, adminBotId]
+            'SELECT * FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC',
+            [user_id]
         );
         return res.json(messages);
     } catch (err) {
@@ -1098,13 +954,13 @@ router.post('/chat/:user_id', async (req, res) => {
         if (!message) return res.status(400).json({ error: 'message is required' });
 
         await pool.execute(
-            'INSERT INTO chat_messages (user_id, bot_id, message, is_admin, created_at) VALUES (?, ?, ?, 1, NOW())',
-            [user_id, adminBotId, message]
+            'INSERT INTO chat_messages (user_id, message, is_admin, created_at) VALUES (?, ?, 1, NOW())',
+            [user_id, message]
         );
 
         await pool.execute(
-            'INSERT INTO alerts (user_id, title, message, type, bot_id) VALUES (?, ?, ?, ?, ?)',
-            [user_id, 'New Message', 'You have a new message from support', 'chat', adminBotId]
+            'INSERT INTO alerts (user_id, title, message, type) VALUES (?, ?, ?, ?)',
+            [user_id, 'New Message', 'You have a new message from support', 'chat']
         );
 
         return res.json({ success: true });
@@ -1120,10 +976,9 @@ router.get('/withdrawals', async (req, res) => {
         const [rows] = await pool.execute(`
             SELECT w.*, a.username, a.first_name, a.last_name 
             FROM withdrawals w 
-            LEFT JOIN auth a ON w.user_id = a.tg_id AND a.bot_id = w.bot_id
-            WHERE w.bot_id = ?
+            LEFT JOIN auth a ON w.user_id = a.tg_id
             ORDER BY w.created_at DESC
-        `, [adminBotId]);
+        `);
         return res.json({ success: true, withdrawals: rows });
     } catch (err) {
         console.error('[admin/withdrawals]', err);
@@ -1142,7 +997,7 @@ router.post('/withdrawals/approve', async (req, res) => {
         try {
             await conn.beginTransaction();
 
-            const [withdrawals] = await conn.execute('SELECT * FROM withdrawals WHERE id = ? AND bot_id = ? FOR UPDATE', [id, adminBotId]);
+            const [withdrawals] = await conn.execute('SELECT * FROM withdrawals WHERE id = ? FOR UPDATE', [id]);
             const w = withdrawals[0];
 
             if (!w) {
@@ -1157,13 +1012,11 @@ router.post('/withdrawals/approve', async (req, res) => {
                 return res.status(400).json({ error: 'Withdrawal is already completed' });
             }
 
-            // Update status to done
-            await conn.execute('UPDATE withdrawals SET status = \'done\' WHERE id = ? AND bot_id = ?', [id, adminBotId]);
+            await conn.execute("UPDATE withdrawals SET status = 'done' WHERE id = ?", [id]);
 
-            // Notify user
             await conn.execute(
-                'INSERT INTO alerts (user_id, title, message, type, bot_id) VALUES (?, ?, ?, \'success\', ?)',
-                [w.user_id, 'Withdrawal Done', `Your withdrawal request of ${parseFloat(w.amount).toFixed(2)} ETB has been marked as DONE and transferred to your bank account!`, adminBotId]
+                "INSERT INTO alerts (user_id, title, message, type) VALUES (?, ?, ?, 'success')",
+                [w.user_id, 'Withdrawal Done', `Your withdrawal request of ${parseFloat(w.amount).toFixed(2)} ETB has been marked as DONE and transferred to your bank account!`]
             );
 
             await conn.commit();
@@ -1184,40 +1037,32 @@ router.post('/withdrawals/approve', async (req, res) => {
 // ─── ROUTE: /admin/finance-stats (GET) ───────────────────────────
 router.get('/finance-stats', async (req, res) => {
     try {
-        // 1. Revenues (completed deposits)
-        const [[{ totalRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success') AND bot_id = ?", [adminBotId]);
-        const [[{ todayRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as todayRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= CURDATE() AND bot_id = ?", [adminBotId]);
-        const [[{ weeklyRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as weeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) AND bot_id = ?", [adminBotId]);
-        const [[{ monthlyRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as monthlyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND bot_id = ?", [adminBotId]);
+        const [[{ totalRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalRevenue FROM deposits WHERE status IN ('completed', 'success')");
+        const [[{ todayRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as todayRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= CURDATE()");
+        const [[{ weeklyRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as weeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        const [[{ monthlyRevenue }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as monthlyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
 
-        // Previous week's revenue (for growth %)
         const [[{ prevWeeklyRevenue }]] = await pool.execute(
-            "SELECT COALESCE(SUM(amount), 0) as prevWeeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY) AND bot_id = ?",
-            [adminBotId]
+            "SELECT COALESCE(SUM(amount), 0) as prevWeeklyRevenue FROM deposits WHERE status IN ('completed', 'success') AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)"
         );
 
-        // 2. Withdrawals
-        const [[{ totalWithdrawn }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalWithdrawn FROM withdrawals WHERE status = 'done' AND bot_id = ?", [adminBotId]);
-        const [[{ todayWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as todayWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= CURDATE() AND bot_id = ?", [adminBotId]);
-        const [[{ weeklyWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as weeklyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) AND bot_id = ?", [adminBotId]);
-        const [[{ monthlyWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as monthlyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND bot_id = ?", [adminBotId]);
-        const [[{ pendingWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as pendingWithdrawals FROM withdrawals WHERE status = 'pending' AND bot_id = ?", [adminBotId]);
-        const [[{ totalWithdrawalsCount }]] = await pool.execute("SELECT COUNT(*) as totalWithdrawalsCount FROM withdrawals WHERE bot_id = ?", [adminBotId]);
-        const [[{ totalWithdrawalsSum }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalWithdrawalsSum FROM withdrawals WHERE bot_id = ?", [adminBotId]);
+        const [[{ totalWithdrawn }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalWithdrawn FROM withdrawals WHERE status = 'done'");
+        const [[{ todayWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as todayWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= CURDATE()");
+        const [[{ weeklyWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as weeklyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        const [[{ monthlyWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as monthlyWithdrawals FROM withdrawals WHERE status = 'done' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
+        const [[{ pendingWithdrawals }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as pendingWithdrawals FROM withdrawals WHERE status = 'pending'");
+        const [[{ totalWithdrawalsCount }]] = await pool.execute("SELECT COUNT(*) as totalWithdrawalsCount FROM withdrawals");
+        const [[{ totalWithdrawalsSum }]] = await pool.execute("SELECT COALESCE(SUM(amount), 0) as totalWithdrawalsSum FROM withdrawals");
 
-        // 3. Wallet / Withdrawable Balance
-        const [[{ withdrawableBalance }]] = await pool.execute("SELECT COALESCE(SUM(balance), 0) as withdrawableBalance FROM auth WHERE bot_id = ?", [adminBotId]);
+        const [[{ withdrawableBalance }]] = await pool.execute("SELECT COALESCE(SUM(balance), 0) as withdrawableBalance FROM auth");
 
-        // 4. Paying Users
-        const [[{ totalPayingUsers }]] = await pool.execute("SELECT COUNT(DISTINCT user_id) as totalPayingUsers FROM deposits WHERE status IN ('completed', 'success') AND bot_id = ?", [adminBotId]);
+        const [[{ totalPayingUsers }]] = await pool.execute("SELECT COUNT(DISTINCT user_id) as totalPayingUsers FROM deposits WHERE status IN ('completed', 'success')");
 
-        // 5. Provider Costs (estimate based on profit margin / custom rates)
         const [orders] = await pool.execute(`
             SELECT o.*, sc.profit_margin, sc.custom_rate 
             FROM orders o 
-            LEFT JOIN service_custom sc ON o.service_id = sc.service_id AND sc.bot_id = o.bot_id
-            WHERE o.bot_id = ?
-        `, [adminBotId]);
+            LEFT JOIN service_custom sc ON o.service_id = sc.service_id
+        `);
 
         let providerCosts = 0;
         orders.forEach(o => {
@@ -1231,13 +1076,12 @@ router.get('/finance-stats', async (req, res) => {
             if (margin > 0) {
                 providerCosts += cost / (1 + margin / 100);
             } else if (customRate !== null && customRate > 0) {
-                providerCosts += cost * 0.80; // default 20% margin for custom rates
+                providerCosts += cost * 0.80;
             } else {
-                providerCosts += cost / 1.15; // default 15% markup
+                providerCosts += cost / 1.15;
             }
         });
 
-        // 6. Growth calculation
         const thisWeek = parseFloat(weeklyRevenue);
         const prevWeek = parseFloat(prevWeeklyRevenue);
         let revenueGrowth = 0;
@@ -1350,12 +1194,10 @@ router.post('/send-telegram', async (req, res) => {
         }
 
         if (target === 'all') {
-            // Broadcast to all users of this bot
-            const [users] = await pool.execute('SELECT tg_id, first_name, username FROM auth WHERE tg_id IS NOT NULL AND bot_id = ?', [adminBotId]);
+            const [users] = await pool.execute('SELECT tg_id, first_name, username FROM auth WHERE tg_id IS NOT NULL');
 
             const results = [];
 
-            // Loop through users and send message
             for (const user of users) {
                 const personalizedText = message || '';
                 const firstName = user.first_name || 'User';
@@ -1386,10 +1228,9 @@ router.post('/send-telegram', async (req, res) => {
 
             return res.json({ success: true, results });
         } else {
-            // Send to a single user
             let personalizedText = message || '';
             try {
-                const [rows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? AND bot_id = ? LIMIT 1', [target, adminBotId]);
+                const [rows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? LIMIT 1', [target]);
                 if (rows.length > 0) {
                     const firstName = rows[0].first_name || 'User';
                     personalizedText = personalizedText
@@ -1404,15 +1245,15 @@ router.post('/send-telegram', async (req, res) => {
             const defaultAppUrl = process.env.MINI_APP_URL || 'https://primora-client.onrender.com';
 
             const [result] = await pool.execute(
-                "INSERT INTO broadcasts (message, image_url, btn_text, btn_url, bot_id, created_at) VALUES (?, ?, 'Open App 🎵', ?, ?, NOW())",
-                [message || '', imageUrl || null, defaultAppUrl, adminBotId]
+                "INSERT INTO broadcasts (message, image_url, btn_text, btn_url, created_at) VALUES (?, ?, 'Open App 🎵', ?, NOW())",
+                [message || '', imageUrl || null, defaultAppUrl]
             );
             const broadcastId = result.insertId;
 
             if (tgRes && tgRes.ok && tgRes.result && tgRes.result.message_id) {
                 await pool.execute(
-                    'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, bot_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
-                    [broadcastId, target, tgRes.result.message_id, 'sent', null, adminBotId]
+                    'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+                    [broadcastId, target, tgRes.result.message_id, 'sent', null]
                 );
             }
 
@@ -1582,12 +1423,11 @@ router.get('/broadcasts', async (req, res) => {
     try {
         const [rows] = await pool.execute(`
             SELECT b.*, 
-                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'sent' AND bm.bot_id = b.bot_id) as sent_count,
-                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'failed' AND bm.bot_id = b.bot_id) as failed_count
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'sent') as sent_count,
+                   (SELECT COUNT(*) FROM broadcast_messages bm WHERE bm.broadcast_id = b.id AND bm.status = 'failed') as failed_count
             FROM broadcasts b
-            WHERE b.bot_id = ?
             ORDER BY b.created_at DESC
-        `, [adminBotId]);
+        `);
         return res.json(rows);
     } catch (err) {
         console.error('[admin/broadcasts GET]', err);
@@ -1604,15 +1444,15 @@ router.post('/broadcasts', async (req, res) => {
         }
 
         const bText = btnText || 'Open App 🎵';
-        const bUrl = btnUrl || 'https://musical-caramel-cae47e.netlify.app/';
+        const bUrl = btnUrl || 'https://primora-client.onrender.com';
 
         const [result] = await pool.execute(
-            'INSERT INTO broadcasts (message, image_url, btn_text, btn_url, bot_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-            [message || '', imageUrl || null, bText, bUrl, adminBotId]
+            'INSERT INTO broadcasts (message, image_url, btn_text, btn_url, created_at) VALUES (?, ?, ?, ?, NOW())',
+            [message || '', imageUrl || null, bText, bUrl]
         );
         const broadcastId = result.insertId;
 
-        const [users] = await pool.execute('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL AND bot_id = ?', [adminBotId]);
+        const [users] = await pool.execute('SELECT tg_id, first_name FROM auth WHERE tg_id IS NOT NULL');
 
         let sentCount = 0;
         let failedCount = 0;
@@ -1629,21 +1469,21 @@ router.post('/broadcasts', async (req, res) => {
                 if (tgRes && tgRes.ok && tgRes.result && tgRes.result.message_id) {
                     const msgId = tgRes.result.message_id;
                     await pool.execute(
-                        'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, bot_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
-                        [broadcastId, user.tg_id, msgId, 'sent', null, adminBotId]
+                        'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+                        [broadcastId, user.tg_id, msgId, 'sent', null]
                     );
                     sentCount++;
                 } else {
                     await pool.execute(
-                        'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, bot_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
-                        [broadcastId, user.tg_id, 0, 'failed', 'Invalid Telegram response', adminBotId]
+                        'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+                        [broadcastId, user.tg_id, 0, 'failed', 'Invalid Telegram response']
                     );
                     failedCount++;
                 }
             } catch (err) {
                 await pool.execute(
-                    'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, bot_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
-                    [broadcastId, user.tg_id, 0, 'failed', err.message, adminBotId]
+                    'INSERT INTO broadcast_messages (broadcast_id, tg_id, telegram_message_id, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+                    [broadcastId, user.tg_id, 0, 'failed', err.message]
                 );
                 failedCount++;
             }
@@ -1668,16 +1508,16 @@ router.put('/broadcasts/:id', async (req, res) => {
         const { message, imageUrl, btnText, btnUrl } = req.body;
 
         const bText = btnText || 'Open App 🎵';
-        const bUrl = btnUrl || 'https://musical-caramel-cae47e.netlify.app/';
+        const bUrl = btnUrl || 'https://primora-client.onrender.com';
 
         await pool.execute(
-            'UPDATE broadcasts SET message = ?, image_url = ?, btn_text = ?, btn_url = ? WHERE id = ? AND bot_id = ?',
-            [message || '', imageUrl || null, bText, bUrl, broadcastId, adminBotId]
+            'UPDATE broadcasts SET message = ?, image_url = ?, btn_text = ?, btn_url = ? WHERE id = ?',
+            [message || '', imageUrl || null, bText, bUrl, broadcastId]
         );
 
         const [messages] = await pool.execute(
-            "SELECT tg_id, telegram_message_id, custom_message FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent' AND bot_id = ?",
-            [broadcastId, adminBotId]
+            "SELECT tg_id, telegram_message_id, custom_message FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent'",
+            [broadcastId]
         );
 
         let updatedCount = 0;
@@ -1685,7 +1525,7 @@ router.put('/broadcasts/:id', async (req, res) => {
 
         for (const msg of messages) {
             try {
-                const [uRows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? AND bot_id = ? LIMIT 1', [msg.tg_id, adminBotId]);
+                const [uRows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? LIMIT 1', [msg.tg_id]);
                 const firstName = uRows.length > 0 ? (uRows[0].first_name || 'User') : 'User';
 
                 const textToEdit = msg.custom_message || message || '';
@@ -1718,8 +1558,8 @@ router.delete('/broadcasts/:id', async (req, res) => {
         const broadcastId = req.params.id;
 
         const [messages] = await pool.execute(
-            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent' AND bot_id = ?",
-            [broadcastId, adminBotId]
+            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE broadcast_id = ? AND status = 'sent'",
+            [broadcastId]
         );
 
         let deletedCount = 0;
@@ -1734,7 +1574,7 @@ router.delete('/broadcasts/:id', async (req, res) => {
             }
         }
 
-        await pool.execute('DELETE FROM broadcasts WHERE id = ? AND bot_id = ?', [broadcastId, adminBotId]);
+        await pool.execute('DELETE FROM broadcasts WHERE id = ?', [broadcastId]);
 
         return res.json({
             success: true,
@@ -1754,10 +1594,10 @@ router.get('/broadcasts/:id/messages', async (req, res) => {
         const [rows] = await pool.execute(`
             SELECT bm.*, a.first_name, a.username 
             FROM broadcast_messages bm
-            LEFT JOIN auth a ON bm.tg_id = a.tg_id AND a.bot_id = bm.bot_id
-            WHERE bm.broadcast_id = ? AND bm.bot_id = ?
+            LEFT JOIN auth a ON bm.tg_id = a.tg_id
+            WHERE bm.broadcast_id = ?
             ORDER BY bm.created_at ASC
-        `, [broadcastId, adminBotId]);
+        `, [broadcastId]);
         return res.json(rows);
     } catch (err) {
         console.error('[admin/broadcasts/:id/messages GET]', err);
@@ -1775,8 +1615,8 @@ router.put('/broadcasts/messages/:msg_id', async (req, res) => {
             SELECT bm.*, b.btn_text, b.btn_url 
             FROM broadcast_messages bm
             JOIN broadcasts b ON bm.broadcast_id = b.id
-            WHERE bm.id = ? AND bm.status = 'sent' AND bm.bot_id = ?
-        `, [msgId, adminBotId]);
+            WHERE bm.id = ? AND bm.status = 'sent'
+        `, [msgId]);
         const msgRecord = records[0];
 
         if (!msgRecord) {
@@ -1792,7 +1632,7 @@ router.put('/broadcasts/messages/:msg_id', async (req, res) => {
             msgRecord.btn_url
         );
 
-        await pool.execute('UPDATE broadcast_messages SET custom_message = ? WHERE id = ? AND bot_id = ?', [message, msgId, adminBotId]);
+        await pool.execute('UPDATE broadcast_messages SET custom_message = ? WHERE id = ?', [message, msgId]);
 
         return res.json({ success: true });
     } catch (err) {
@@ -1807,8 +1647,8 @@ router.delete('/broadcasts/messages/:msg_id', async (req, res) => {
         const msgId = req.params.msg_id;
 
         const [records] = await pool.execute(
-            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE id = ? AND status = 'sent' AND bot_id = ?",
-            [msgId, adminBotId]
+            "SELECT tg_id, telegram_message_id FROM broadcast_messages WHERE id = ? AND status = 'sent'",
+            [msgId]
         );
         const msgRecord = records[0];
 
@@ -1816,7 +1656,7 @@ router.delete('/broadcasts/messages/:msg_id', async (req, res) => {
             await deleteTelegramMessage(msgRecord.tg_id, msgRecord.telegram_message_id);
         }
 
-        await pool.execute('DELETE FROM broadcast_messages WHERE id = ? AND bot_id = ?', [msgId, adminBotId]);
+        await pool.execute('DELETE FROM broadcast_messages WHERE id = ?', [msgId]);
 
         return res.json({ success: true });
     } catch (err) {

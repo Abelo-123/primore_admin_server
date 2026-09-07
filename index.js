@@ -31,16 +31,7 @@ const app = express();
     try {
         const conn = await pool.getConnection();
         try {
-            // Ensure auth table has composite primary key (tg_id, bot_id) instead of just tg_id
-            try {
-                try {
-                    await conn.execute('ALTER TABLE auth DROP INDEX tg_id_bot_id');
-                } catch (e) {}
-                await conn.execute('ALTER TABLE auth DROP PRIMARY KEY, ADD PRIMARY KEY (tg_id, bot_id)');
-                console.log('[Startup] Successfully updated PRIMARY KEY of auth table to compound (tg_id, bot_id)');
-            } catch (e) {
-                console.warn('[Startup] Note/Error updating primary key to compound:', e.message);
-            }
+            // Ensure auth table exists
 
             // Ensure orders custom_fields exists
             try {
@@ -117,7 +108,6 @@ const app = express();
                 CREATE TABLE IF NOT EXISTS transactions (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     user_id VARCHAR(255) NOT NULL,
-                    bot_id VARCHAR(255) DEFAULT NULL,
                     type VARCHAR(50) NOT NULL,
                     amount DECIMAL(10, 2) NOT NULL,
                     balance_after DECIMAL(10, 2) NOT NULL,
@@ -127,11 +117,6 @@ const app = express();
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             `);
-            // Add bot_id to transactions if missing
-            try {
-                await conn.execute('ALTER TABLE transactions ADD COLUMN bot_id VARCHAR(255) DEFAULT NULL AFTER user_id');
-                console.log('[Startup] Added bot_id column to transactions table');
-            } catch (e) {}
             // Add reference_id to transactions if missing
             try {
                 await conn.execute('ALTER TABLE transactions ADD COLUMN reference_id INT DEFAULT NULL');
