@@ -578,6 +578,229 @@ if ($route === '/admin/deposits' && $method === 'GET') {
     exit;
 }
 
+// ─── ROUTE: /admin/deposits/status (POST) ─────────────────────────
+if ($route === '/admin/deposits/status' && $method === 'POST') {
+    try {
+        $depositId = isset($requestData['deposit_id']) ? (int)$requestData['deposit_id'] : null;
+        $status = isset($requestData['status']) ? trim($requestData['status']) : null;
+        $updateBalance = isset($requestData['update_balance']) ? (bool)$requestData['update_balance'] : false;
+
+        if (empty($depositId) || empty($status)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'deposit_id and status are required']);
+            exit;
+        }
+
+        $validStatuses = ['completed', 'success', 'pending', 'failed', 'expired', 'cancelled'];
+        if (!in_array($status, $validStatuses)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Invalid status. Must be one of: ' . implode(', ', $validStatuses)]);
+            exit;
+        }
+
+        $pdo->beginTransaction();
+
+        $stmt = $pdo->prepare('SELECT * FROM deposits WHERE id = :id FOR UPDATE');
+        $stmt->execute(['id' => $depositId]);
+        $deposit = $stmt->fetch();
+
+        if (!$deposit) {
+            $pdo->rollBack();
+            http_response_code(404);
+            echo json_encode(['error' => 'Deposit not found']);
+            exit;
+        }
+
+        $oldStatus = $deposit['status'];
+        $depositAmount = (float)$deposit['amount'];
+        $userId = (string)$deposit['user_id'];
+        $isNewSuccess = ($status === 'completed' || $status === 'success');
+        $isOldSuccess = ($oldStatus === 'completed' || $oldStatus === 'success');
+
+        if ($isNewSuccess && empty($deposit['completed_at'])) {
+            $stmt = $pdo->prepare('UPDATE deposits SET status = :status, completed_at = NOW() WHERE id = :id');
+            $stmt->execute(['status' => $status, 'id' => $depositId]);
+        } else {
+            $stmt = $pdo->prepare('UPDATE deposits SET status = :status WHERE id = :id');
+            $stmt->execute(['status' => $status, 'id' => $depositId]);
+        }
+
+        $newBalance = null;
+
+        if ($updateBalance) {
+            if ($isNewSuccess && !$isOldSuccess) {
+                // Credit user balance
+                $stmt = $pdo->prepare('UPDATE auth SET balance = balance + :amount, last_deposit = NOW() WHERE tg_id = :tg_id');
+                $stmt->execute(['amount' => $depositAmount, 'tg_id' => $userId]);
+
+                $stmt = $pdo->prepare('SELECT balance FROM auth WHERE tg_id = :tg_id');
+                $stmt->execute(['tg_id' => $userId]);
+                $u = $stmt->fetch();
+                $newBalance = $u ? (float)$u['balance'] : 0.0;
+
+                $stmt = $pdo->prepare("
+                    INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, reference_id, description, created_at)
+                    VALUES (:user_id, 'deposit', :amount, :balance_after, 'deposit', :ref_id, :desc, NOW())
+                ");
+                $stmt->execute([
+                    'user_id' => $userId,
+                    'amount' => $depositAmount,
+                    'balance_after' => $newBalance,
+                    'ref_id' => (string)$depositId,
+                    'desc' => "Admin approved deposit #{$depositId} ({$status})"
+                ]);
+
+                $stmt = $pdo->prepare("
+                    INSERT INTO alerts (user_id, title, message, type)
+                    VALUES (:user_id, 'Deposit Confirmed', :msg, 'success')
+                ");
+                $stmt->execute([
+                    'user_id' => $userId,
+                    'msg' => "Your deposit of " . number_format($depositAmount, 2) . " ETB has been manually confirmed and credited to your balance!"
+                ]);
+            } elseif (!$isNewSuccess && $isOldSuccess) {
+                // Deduct user balance
+                $stmt = $pdo->prepare('UPDATE auth SET balance = GREATEST(0, balance - :amount) WHERE tg_id = :tg_id');
+                $stmt->execute(['amount' => $depositAmount, 'tg_id' => $userId]);
+
+                $stmt = $pdo->prepare('SELECT balance FROM auth WHERE tg_id = :tg_id');
+                $stmt->execute(['tg_id' => $userId]);
+                $u = $stmt->fetch();
+                $newBalance = $u ? (float)$u['balance'] : 0.0;
+
+                $stmt = $pdo->prepare("
+                    INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, reference_id, description, created_at)
+                    VALUES (:user_id, 'refund', :amount, :balance_after, 'deposit', :ref_id, :desc, NOW())
+                ");
+                $stmt->execute([
+                    'user_id' => $userId,
+                    'amount' => -$depositAmount,
+                    'balance_after' => $newBalance,
+                    'ref_id' => (string)$depositId,
+                    'desc' => "Admin changed deposit #{$depositId} status from {$oldStatus} to {$status}"
+                ]);
+            }
+        }
+
+        $pdo->commit();
+
+        echo json_encode([
+            'success' => true,
+            'old_status' => $oldStatus,
+            'new_status' => $status,
+            'new_balance' => $newBalance,
+            'message' => "Deposit #{$depositId} status updated to '{$status}'"
+        ]);
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        http_response_code(500);
+        echo json_encode(['error' => 'Failed to update deposit status: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
+// ─── ROUTE: /admin/deposits/resolve (POST) ────────────────────────
+if ($route === '/admin/deposits/resolve' && $method === 'POST') {
+    try {
+        $depositId = isset($requestData['deposit_id']) ? (int)$requestData['deposit_id'] : null;
+        $action = isset($requestData['action']) ? trim($requestData['action']) : null;
+
+        if (empty($depositId) || !in_array($action, ['completed', 'failed'])) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Missing deposit_id or valid action (completed | failed)']);
+            exit;
+        }
+
+        $pdo->beginTransaction();
+
+        $stmt = $pdo->prepare('SELECT * FROM deposits WHERE id = :id FOR UPDATE');
+        $stmt->execute(['id' => $depositId]);
+        $deposit = $stmt->fetch();
+
+        if (!$deposit) {
+            $pdo->rollBack();
+            http_response_code(404);
+            echo json_encode(['error' => 'Deposit not found']);
+            exit;
+        }
+
+        if ($deposit['status'] === 'success' || $deposit['status'] === 'completed') {
+            $pdo->rollBack();
+            http_response_code(400);
+            echo json_encode(['error' => 'Deposit is already marked as completed']);
+            exit;
+        }
+
+        if ($deposit['status'] === 'failed' && $action === 'failed') {
+            $pdo->rollBack();
+            http_response_code(400);
+            echo json_encode(['error' => 'Deposit is already marked as failed']);
+            exit;
+        }
+
+        if ($action === 'completed') {
+            $amount = (float)$deposit['amount'];
+            $userId = (string)$deposit['user_id'];
+
+            $stmt = $pdo->prepare("UPDATE deposits SET status = 'completed', completed_at = NOW() WHERE id = :id");
+            $stmt->execute(['id' => $depositId]);
+
+            $stmt = $pdo->prepare('UPDATE auth SET balance = balance + :amount, last_deposit = NOW() WHERE tg_id = :tg_id');
+            $stmt->execute(['amount' => $amount, 'tg_id' => $userId]);
+
+            $stmt = $pdo->prepare('SELECT balance FROM auth WHERE tg_id = :tg_id');
+            $stmt->execute(['tg_id' => $userId]);
+            $balRows = $stmt->fetch();
+            $newBalance = $balRows ? (float)$balRows['balance'] : 0.0;
+
+            $stmt = $pdo->prepare("
+                INSERT INTO transactions (user_id, type, amount, balance_after, reference_type, reference_id, description, created_at)
+                VALUES (:user_id, 'deposit', :amount, :balance_after, 'admin_manual', :ref_id, 'Manual admin deposit confirmation', NOW())
+            ");
+            $stmt->execute([
+                'user_id' => $userId,
+                'amount' => $amount,
+                'balance_after' => $newBalance,
+                'ref_id' => (string)$depositId
+            ]);
+
+            $stmt = $pdo->prepare("
+                INSERT INTO alerts (user_id, title, message, type)
+                VALUES (:user_id, 'Deposit Confirmed', :msg, 'success')
+            ");
+            $stmt->execute([
+                'user_id' => $userId,
+                'msg' => "Your deposit of " . number_format($amount, 2) . " ETB has been manually confirmed and credited to your balance!"
+            ]);
+
+            $pdo->commit();
+
+            echo json_encode([
+                'success' => true,
+                'status' => 'completed',
+                'new_balance' => $newBalance,
+                'message' => "Deposit #{$depositId} marked as completed and " . number_format($amount, 2) . " ETB credited."
+            ]);
+        } elseif ($action === 'failed') {
+            $stmt = $pdo->prepare("UPDATE deposits SET status = 'failed' WHERE id = :id");
+            $stmt->execute(['id' => $depositId]);
+
+            $pdo->commit();
+
+            echo json_encode([
+                'success' => true,
+                'status' => 'failed',
+                'message' => "Deposit #{$depositId} marked as failed."
+            ]);
+        }
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        http_response_code(500);
+        echo json_encode(['error' => 'Failed to resolve deposit: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
 // ─── ROUTE: /admin/settings (GET / POST) ─────────────────────────
 if ($route === '/admin/settings') {
     if ($method === 'GET') {
