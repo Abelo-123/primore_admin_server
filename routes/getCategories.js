@@ -30,10 +30,11 @@ router.get('/', async (req, res) => {
     try {
         const forceRefresh = req.query.refresh === '1';
         const platform = req.query.platform || null;
-        const apiKey = process.env.GODOFPANEL_API_KEY;
+        const apiKey = process.env.SMM_PROVIDER_API_KEY || process.env.GODOFPANEL_API_KEY;
+        const providerUrl = process.env.SMM_PROVIDER_URL || process.env.PROVIDER_API_URL || 'https://justanotherpanel.com/api/v2';
 
         if (!apiKey) {
-            return res.status(500).json({ error: 'GODOFPANEL_API_KEY not configured' });
+            return res.status(500).json({ error: 'SMM provider API key not configured' });
         }
 
         const now = Date.now();
@@ -41,10 +42,10 @@ router.get('/', async (req, res) => {
 
         // Fetch fresh data if cache expired or force refresh
         if (forceRefresh || !allCategories || (now - lastCacheTime) > CACHE_TTL_MS) {
-            console.log('[get_categories] Fetching fresh categories from GodOfPanel...');
+            console.log('[get_categories] Fetching fresh categories from SMM Provider...');
             
             const response = await fetch(
-                `https://godofpanel.com/api/v2?key=${apiKey}&action=services`
+                `${providerUrl}?key=${apiKey}&action=services`
             );
 
             if (!response.ok) {

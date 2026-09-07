@@ -34,7 +34,8 @@ router.post('/place', async (req, res) => {
             return res.status(401).json({ success: false, error: 'User not authenticated' });
         }
 
-        const apiKey = process.env.GODOFPANEL_API_KEY;
+        const apiKey = process.env.SMM_PROVIDER_API_KEY || process.env.GODOFPANEL_API_KEY;
+        const providerUrl = process.env.SMM_PROVIDER_URL || process.env.PROVIDER_API_URL || 'https://justanotherpanel.com/api/v2';
         if (!apiKey) return res.status(500).json({ success: false, error: 'Provider API key missing' });
 
         const conn = await pool.getConnection();
@@ -69,8 +70,8 @@ router.post('/place', async (req, res) => {
                 return res.json({ success: false, error: 'User not found' });
             }
 
-            // 3. Fetch specific service from GodOfPanel
-            const gopRes = await fetch(`https://godofpanel.com/api/v2?key=${apiKey}&action=services`);
+            // 3. Fetch specific service from SMM Provider
+            const gopRes = await fetch(`${providerUrl}?key=${apiKey}&action=services`);
             const allServices = await gopRes.json();
             const serviceData = allServices.find(s => parseInt(s.service) === parseInt(service));
 
@@ -114,7 +115,7 @@ router.post('/place', async (req, res) => {
             if (comments) orderParams.append('comments', comments);
             if (answer_number) orderParams.append('answer_number', answer_number.toString());
 
-            const orderRes = await fetch('https://godofpanel.com/api/v2', {
+            const orderRes = await fetch(providerUrl, {
                 method: 'POST',
                 body: orderParams
             });
@@ -228,10 +229,11 @@ router.post('/status', async (req, res) => {
 
         if (orders.length === 0) return res.json({ success: true, updated: [] });
 
-        const apiKey = process.env.GODOFPANEL_API_KEY;
+        const apiKey = process.env.SMM_PROVIDER_API_KEY || process.env.GODOFPANEL_API_KEY;
+        const providerUrl = process.env.SMM_PROVIDER_URL || process.env.PROVIDER_API_URL || 'https://justanotherpanel.com/api/v2';
         const reqOrderIds = orders.map(o => o.provider_order_id).join(',');
         
-        const gopRes = await fetch(`https://godofpanel.com/api/v2?key=${apiKey}&action=status&orders=${reqOrderIds}`);
+        const gopRes = await fetch(`${providerUrl}?key=${apiKey}&action=status&orders=${reqOrderIds}`);
         const statusMap = await gopRes.json();
 
         const updated = [];
@@ -265,8 +267,9 @@ router.post('/refill', async (req, res) => {
         const [orders] = await pool.execute('SELECT provider_order_id FROM orders WHERE id = ? AND user_id = ? AND bot_id = ?', [order_id, tgId, botId]);
         if (!orders[0]) return res.json({ success: false, message: 'Order not found' });
 
-        const apiKey = process.env.GODOFPANEL_API_KEY;
-        const gopRes = await fetch(`https://godofpanel.com/api/v2?key=${apiKey}&action=refill&order=${orders[0].provider_order_id}`);
+        const apiKey = process.env.SMM_PROVIDER_API_KEY || process.env.GODOFPANEL_API_KEY;
+        const providerUrl = process.env.SMM_PROVIDER_URL || process.env.PROVIDER_API_URL || 'https://justanotherpanel.com/api/v2';
+        const gopRes = await fetch(`${providerUrl}?key=${apiKey}&action=refill&order=${orders[0].provider_order_id}`);
         const refillData = await gopRes.json();
 
         if (refillData.error) return res.json({ success: false, message: refillData.error });

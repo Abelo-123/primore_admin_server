@@ -79,6 +79,7 @@ try {
 // Global configurations
 $botToken = getEnvVar('BOT_TOKEN', '');
 $gopApiKey = getEnvVar('GODOFPANEL_API_KEY');
+$smmProviderUrl = getEnvVar('SMM_PROVIDER_URL', getEnvVar('PROVIDER_API_URL', 'https://justanotherpanel.com/api/v2'));
 
 // Admin auth globals
 $adminPassword = getEnvVar('ADMIN_PASSWORD', 'R34234'); // Default fallback password

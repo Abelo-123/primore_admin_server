@@ -21,11 +21,12 @@ router.get('/', async (req, res) => {
     const reqCategory = req.query.category || null;
     const reqIds = req.query.ids ? req.query.ids.split(',').map(id => parseInt(id, 10)) : null;
     const includeDisabled = req.query.include_disabled === '1';
-    const apiKey = process.env.GODOFPANEL_API_KEY;
+    const apiKey = process.env.SMM_PROVIDER_API_KEY || process.env.GODOFPANEL_API_KEY;
+    const providerUrl = process.env.SMM_PROVIDER_URL || process.env.PROVIDER_API_URL || 'https://justanotherpanel.com/api/v2';
 
     try {
         if (!apiKey) {
-            return res.status(500).json({ error: 'GODOFPANEL_API_KEY not configured in backend .env' });
+            return res.status(500).json({ error: 'SMM provider API key not configured in backend .env' });
         }
 
         const now = Date.now();
@@ -60,8 +61,8 @@ router.get('/', async (req, res) => {
             return res.json(result);
         }
 
-        // 1. Fetch raw services from GodOfPanel
-        const response = await fetch(`https://godofpanel.com/api/v2?key=${apiKey}&action=services`);
+        // 1. Fetch raw services from SMM Provider
+        const response = await fetch(`${providerUrl}?key=${apiKey}&action=services`);
         if (!response.ok) {
             throw new Error(`GodOfPanel returned ${response.status}`);
         }

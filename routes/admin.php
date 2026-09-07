@@ -2230,6 +2230,7 @@ if ($route === '/admin/reseller/deposit/public-status' && $method === 'GET') {
     
     // Check key matches any valid reseller/joadmin key
     $allowedKeys = array_filter([
+        getEnvVar('SMM_PROVIDER_API_KEY'),
         getEnvVar('JOADMIN_API_KEY'),
         getEnvVar('GODOFPANEL_API_KEY'),
         getEnvVar('PRIMORE_API_KEY'),
@@ -2374,6 +2375,7 @@ if ($route === '/admin/reseller/withdrawal-history' && $method === 'GET') {
     $providedKey = isset($_GET['key']) ? $_GET['key'] : (isset($_SERVER['HTTP_X_API_KEY']) ? $_SERVER['HTTP_X_API_KEY'] : '');
     global $gopApiKey;
     $allowedKeys = array_filter([
+        getEnvVar('SMM_PROVIDER_API_KEY'),
         getEnvVar('JOADMIN_API_KEY'),
         getEnvVar('GODOFPANEL_API_KEY'),
         getEnvVar('PRIMORE_API_KEY'),
@@ -2490,6 +2492,7 @@ if (($route === '/admin/reseller/withdrawal/callback' || $route === '/admin/rese
     $providedKey = isset($_SERVER['HTTP_X_API_KEY']) ? $_SERVER['HTTP_X_API_KEY'] : (isset($_GET['key']) ? $_GET['key'] : '');
     global $gopApiKey;
     $allowedKeys = array_filter([
+        getEnvVar('SMM_PROVIDER_API_KEY'),
         getEnvVar('JOADMIN_API_KEY'),
         getEnvVar('GODOFPANEL_API_KEY'),
         getEnvVar('PRIMORE_API_KEY'),
