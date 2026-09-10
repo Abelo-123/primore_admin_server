@@ -26,8 +26,7 @@ async function handleGetDeposits(req, res) {
         if (limit > 50) limit = 50; // Cap at 50
 
         // Authenticate user
-        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-        const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
+        const { user: tgUser } = getBotIdAndUser(initData);
         const tgId = tgUser?.id ? String(tgUser.id) : null;
         if (!tgId) {
             return res.status(401).json({ success: false, error: 'User not authenticated' });
@@ -36,10 +35,10 @@ async function handleGetDeposits(req, res) {
         const [deposits] = await pool.execute(
             `SELECT id, amount, tx_ref as reference_id, status, 'Chapa' as method, created_at, completed_at
              FROM deposits
-             WHERE user_id = ? AND bot_id = ?
+             WHERE user_id = ?
              ORDER BY created_at DESC
              LIMIT ?`,
-            [tgId, botId, limit]
+            [tgId, limit]
         );
 
         return res.json(deposits);

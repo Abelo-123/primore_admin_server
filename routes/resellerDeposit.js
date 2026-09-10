@@ -30,8 +30,7 @@ const SITE_URL = process.env.SITE_URL || 'https://primore-admin-server.onrender.
 async function getAdminPassword() {
     try {
         const [rows] = await pool.execute(
-            "SELECT setting_value FROM settings WHERE setting_key = 'admin_password' AND bot_id = ? LIMIT 1",
-            [adminBotId]
+            "SELECT setting_value FROM settings WHERE setting_key = 'admin_password' LIMIT 1"
         );
         if (rows.length > 0 && rows[0].setting_value) return rows[0].setting_value;
     } catch (e) {}
@@ -197,8 +196,8 @@ async function handleDepositCallback(txRef) {
 
             // Credit reseller_balance
             await conn.execute(
-                'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ("reseller_balance", ?, ?) ON DUPLICATE KEY UPDATE setting_value = CAST(CAST(setting_value AS DECIMAL(10,2)) + ? AS CHAR)',
-                [adminBotId, verifiedAmount.toFixed(2), verifiedAmount]
+                'INSERT INTO settings (setting_key, setting_value) VALUES ("reseller_balance", ?) ON DUPLICATE KEY UPDATE setting_value = CAST(CAST(setting_value AS DECIMAL(10,2)) + ? AS CHAR)',
+                [verifiedAmount.toFixed(2), verifiedAmount]
             );
 
             await conn.commit();
@@ -246,8 +245,7 @@ router.post('/verify', async (req, res) => {
     // Also return current reseller_balance
     try {
         const [rows] = await pool.execute(
-            'SELECT setting_value FROM settings WHERE setting_key = "reseller_balance" AND bot_id = ?',
-            [adminBotId]
+            'SELECT setting_value FROM settings WHERE setting_key = "reseller_balance" LIMIT 1'
         );
         const balance = rows.length > 0 ? parseFloat(rows[0].setting_value || '0') : 0;
         return res.json({ ...result, reseller_balance: balance });
@@ -277,8 +275,7 @@ router.get('/public-status', async (req, res) => {
     }
     try {
         const [rows] = await pool.execute(
-            'SELECT setting_key, setting_value FROM settings WHERE setting_key IN ("reseller_balance", "total_deposit") AND bot_id = ?',
-            [adminBotId]
+            'SELECT setting_key, setting_value FROM settings WHERE setting_key IN ("reseller_balance", "total_deposit")'
         );
         const data = {};
         rows.forEach(r => { data[r.setting_key] = parseFloat(r.setting_value || '0'); });

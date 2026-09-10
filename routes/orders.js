@@ -27,8 +27,7 @@ router.post('/place', async (req, res) => {
     try {
         const { service, link, quantity, initData, answer_number, comments } = req.body;
         
-        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-        const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
+        const { user: tgUser } = getBotIdAndUser(initData);
         const tgId = tgUser?.id ? String(tgUser.id) : null;
         if (!tgId) {
             return res.status(401).json({ success: false, error: 'User not authenticated' });
@@ -58,12 +57,12 @@ router.post('/place', async (req, res) => {
                 }
             } catch (e) {}
 
-            const [settingsRows] = await conn.execute('SELECT setting_value FROM settings WHERE setting_key = "rate_multiplier" ORDER BY (bot_id = ?) DESC LIMIT 1', [botId]);
+            const [settingsRows] = await conn.execute('SELECT setting_value FROM settings WHERE setting_key = "rate_multiplier" LIMIT 1');
             const primoraMult = settingsRows.length > 0 ? parseFloat(settingsRows[0].setting_value) : 1.0;
             const rateMultiplier = primoraMult <= 10.0 ? (joadminMult * primoraMult) : (joadminMult * (primoraMult / 55.0));
 
             // 2. Lock user row to prevent race conditions
-            const [userRows] = await conn.execute('SELECT * FROM auth WHERE tg_id = ? AND bot_id = ? FOR UPDATE', [tgId, botId]);
+            const [userRows] = await conn.execute('SELECT * FROM auth WHERE tg_id = ? FOR UPDATE', [tgId]);
             const user = userRows[0];
             if (!user) {
                 await conn.rollback();
@@ -92,8 +91,7 @@ router.post('/place', async (req, res) => {
 
             // Check reseller balance with joadmin
             const [resellerRows] = await conn.execute(
-                'SELECT setting_value FROM settings WHERE setting_key = "reseller_balance" AND bot_id = ?',
-                [botId]
+                'SELECT setting_value FROM settings WHERE setting_key = "reseller_balance" LIMIT 1'
             );
             const resellerBal = resellerRows.length > 0 ? parseFloat(resellerRows[0].setting_value || '0') : 0;
             if (resellerBal < totalCostEtb) {
@@ -129,33 +127,33 @@ router.post('/place', async (req, res) => {
             const providerOrderId = orderData.order;
 
             // 5. Update user balance & reseller balance
-            await conn.execute('UPDATE auth SET balance = balance - ?, last_order = NOW(), total_spent = total_spent + ? WHERE tg_id = ? AND bot_id = ?', [totalCostEtb, totalCostEtb, tgId, botId]);
+            await conn.execute('UPDATE auth SET balance = balance - ?, last_order = NOW(), total_spent = total_spent + ? WHERE tg_id = ?', [totalCostEtb, totalCostEtb, tgId]);
             
             // Deduct reseller balance
             const newResellerBal = Math.max(0, resellerBal - totalCostEtb).toFixed(2);
             await conn.execute(
-                'INSERT INTO settings (setting_key, bot_id, setting_value) VALUES ("reseller_balance", ?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
-                [botId, newResellerBal, newResellerBal]
+                'INSERT INTO settings (setting_key, setting_value) VALUES ("reseller_balance", ?) ON DUPLICATE KEY UPDATE setting_value = ?',
+                [newResellerBal, newResellerBal]
             );
 
             // Get new balance
-            const [newBalRows] = await conn.execute('SELECT balance FROM auth WHERE tg_id = ? AND bot_id = ?', [tgId, botId]);
+            const [newBalRows] = await conn.execute('SELECT balance FROM auth WHERE tg_id = ?', [tgId]);
             const newBalanceStr = newBalRows[0].balance;
 
             // 6. Insert Order into DB
             const [insertRes] = await conn.execute(
                 `INSERT INTO orders 
-                 (user_id, bot_id, service_id, target_link, quantity, provider_order_id, cost, status, created_at) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
-                [tgId, botId, service, link, quantity, providerOrderId, totalCostEtb]
+                 (user_id, service_id, target_link, quantity, provider_order_id, cost, status, created_at) 
+                 VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+                [tgId, service, link, quantity, providerOrderId, totalCostEtb]
             );
 
             // 7. Log Transaction
             await conn.execute(
                 `INSERT INTO transactions 
-                 (user_id, bot_id, type, amount, balance_after, reference_type, reference_id, description)
-                 VALUES (?, ?, 'order', ?, ?, 'order', ?, 'Placed Order #${insertRes.insertId}')`,
-                [tgId, botId, -totalCostEtb, newBalanceStr, insertRes.insertId]
+                 (user_id, type, amount, balance_after, reference_type, reference_id, description)
+                 VALUES (?, 'order', ?, ?, 'order', ?, 'Placed Order #${insertRes.insertId}')`,
+                [tgId, -totalCostEtb, newBalanceStr, insertRes.insertId]
             );
 
             await conn.commit();
@@ -187,15 +185,14 @@ router.post('/place', async (req, res) => {
 // getOrders
 router.post('/list', async (req, res) => {
     const { initData } = req.body;
-    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-    const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
+    const { user: tgUser } = getBotIdAndUser(initData);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
     if (!tgId) return res.status(401).json({ error: 'Not authenticated' });
 
     try {
         const [rows] = await pool.execute(
-            'SELECT * FROM orders WHERE user_id = ? AND bot_id = ? ORDER BY created_at DESC LIMIT 100',
-            [tgId, botId]
+            'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 100',
+            [tgId]
         );
         const formattedRows = rows.map(o => {
             const val = o.cost !== undefined && o.cost !== null ? parseFloat(o.cost) : (o.charge !== undefined && o.charge !== null ? parseFloat(o.charge) : 0);
@@ -215,16 +212,15 @@ router.post('/list', async (req, res) => {
 // checkOrderStatus
 router.post('/status', async (req, res) => {
     const { initData } = req.body;
-    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-    const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
+    const { user: tgUser } = getBotIdAndUser(initData);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
     if (!tgId) return res.status(401).json({ error: 'Not authenticated' });
 
     try {
         // Find pending/in_progress orders for this user
         const [orders] = await pool.execute(
-            "SELECT id, provider_order_id FROM orders WHERE user_id = ? AND bot_id = ? AND status IN ('pending', 'in_progress', 'processing')",
-            [tgId, botId]
+            "SELECT id, provider_order_id FROM orders WHERE user_id = ? AND status IN ('pending', 'in_progress', 'processing')",
+            [tgId]
         );
 
         if (orders.length === 0) return res.json({ success: true, updated: [] });
@@ -241,8 +237,8 @@ router.post('/status', async (req, res) => {
             const providerStatus = statusMap[order.provider_order_id];
             if (providerStatus && providerStatus.status) {
                 const newStatus = providerStatus.status.toLowerCase();
-                await pool.execute('UPDATE orders SET status = ?, start_count = ?, remains = ? WHERE id = ? AND bot_id = ?', 
-                    [newStatus, providerStatus.start_count || 0, providerStatus.remains || 0, order.id, botId]);
+                await pool.execute('UPDATE orders SET status = ?, start_count = ?, remains = ? WHERE id = ?', 
+                    [newStatus, providerStatus.start_count || 0, providerStatus.remains || 0, order.id]);
                 updated.push({ id: order.id, status: newStatus });
             }
         }
@@ -257,14 +253,13 @@ router.post('/status', async (req, res) => {
 // requestRefill
 router.post('/refill', async (req, res) => {
     const { initData, order_id } = req.body;
-    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-    const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
+    const { user: tgUser } = getBotIdAndUser(initData);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
     if (!tgId) return res.status(401).json({ error: 'Not authenticated' });
 
     try {
         // Find provider order ID
-        const [orders] = await pool.execute('SELECT provider_order_id FROM orders WHERE id = ? AND user_id = ? AND bot_id = ?', [order_id, tgId, botId]);
+        const [orders] = await pool.execute('SELECT provider_order_id FROM orders WHERE id = ? AND user_id = ?', [order_id, tgId]);
         if (!orders[0]) return res.json({ success: false, message: 'Order not found' });
 
         const apiKey = process.env.SMM_PROVIDER_API_KEY || process.env.GODOFPANEL_API_KEY;
@@ -282,8 +277,7 @@ router.post('/refill', async (req, res) => {
 // SSE stream: GET /api/orders/stream?initData=...
 router.get('/stream', (req, res) => {
     const rawInitData = req.query.initData;
-    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-    const { botId, user: tgUser } = getBotIdAndUser(rawInitData, reqBotId);
+    const { user: tgUser } = getBotIdAndUser(rawInitData);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
 
     if (!tgId) {

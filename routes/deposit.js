@@ -41,30 +41,29 @@ router.post('/', async (req, res) => {
         }
 
         // ─── Authenticate user via Telegram initData ─────────
-        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-        const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
+        const { user: tgUser } = getBotIdAndUser(initData);
         const tgId = tgUser?.id ? String(tgUser.id) : null;
         if (!tgId) {
             return res.json({ success: false, error: 'User not authenticated' });
         }
 
         // ─── Find or create user ─────────────────────────────
-        let [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ? AND bot_id = ?', [tgId, botId]);
+        let [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ?', [tgId]);
         let user = users[0];
 
         if (!user) {
             await pool.execute(
-                "INSERT INTO auth (tg_id, bot_id, balance, auth_provider, last_login) VALUES (?, ?, 0.00, 'telegram', NOW())",
-                [tgId, botId]
+                "INSERT INTO auth (tg_id, balance, auth_provider, last_login) VALUES (?, 0.00, 'telegram', NOW())",
+                [tgId]
             );
-            [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ? AND bot_id = ?', [tgId, botId]);
+            [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ?', [tgId]);
             user = users[0];
         }
 
         // ═══ FLOW A: INLINE SDK MODE (tx_ref provided by frontend) ═══
         if (txRef) {
             // Check if tx_ref already exists (idempotent)
-            const [existing] = await pool.execute('SELECT id FROM deposits WHERE tx_ref = ? AND bot_id = ?', [txRef, botId]);
+            const [existing] = await pool.execute('SELECT id FROM deposits WHERE tx_ref = ?', [txRef]);
 
             if (existing[0]) {
                 return res.json({
@@ -76,8 +75,8 @@ router.post('/', async (req, res) => {
 
             // Create a pending deposit record
             const [result] = await pool.execute(
-                "INSERT INTO deposits (user_id, bot_id, amount, tx_ref, status) VALUES (?, ?, ?, ?, 'pending')",
-                [tgId, botId, amount, txRef]
+                "INSERT INTO deposits (user_id, amount, tx_ref, status) VALUES (?, ?, ?, 'pending')",
+                [tgId, amount, txRef]
             );
 
             if (result.insertId) {
@@ -96,8 +95,8 @@ router.post('/', async (req, res) => {
 
         // Insert pending deposit
         await pool.execute(
-            "INSERT INTO deposits (user_id, bot_id, amount, tx_ref, status) VALUES (?, ?, ?, ?, 'pending')",
-            [tgId, botId, amount, generatedTxRef]
+            "INSERT INTO deposits (user_id, amount, tx_ref, status) VALUES (?, ?, ?, 'pending')",
+            [tgId, amount, generatedTxRef]
         );
 
         // Call Chapa API to initialize payment
@@ -115,10 +114,9 @@ router.post('/', async (req, res) => {
             const checkoutUrl = result.data.checkout_url;
 
             // Save checkout_url in DB
-            await pool.execute('UPDATE deposits SET checkout_url = ? WHERE tx_ref = ? AND bot_id = ?', [
+            await pool.execute('UPDATE deposits SET checkout_url = ? WHERE tx_ref = ?', [
                 checkoutUrl,
                 generatedTxRef,
-                botId,
             ]);
 
             return res.json({

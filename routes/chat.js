@@ -6,22 +6,21 @@ const router = Router();
 
 router.post('/', async (req, res) => {
     const { initData, action, message } = req.body;
-    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-    const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
+    const { user: tgUser } = getBotIdAndUser(initData);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
     if (!tgId) return res.status(401).json({ success: false, error: 'Not authenticated' });
 
     try {
         if (action === 'send') {
             await pool.execute(
-                'INSERT INTO chat_messages (user_id, bot_id, message, is_admin, created_at) VALUES (?, ?, ?, 0, NOW())',
-                [tgId, botId, message]
+                'INSERT INTO chat_messages (user_id, message, is_admin, created_at) VALUES (?, ?, 0, NOW())',
+                [tgId, message]
             );
 
             // Notify admin bot
             let firstName = 'User';
             try {
-                const [rows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? AND bot_id = ? LIMIT 1', [tgId, botId]);
+                const [rows] = await pool.execute('SELECT first_name FROM auth WHERE tg_id = ? LIMIT 1', [tgId]);
                 if (rows.length > 0 && rows[0].first_name) {
                     firstName = rows[0].first_name;
                 }
@@ -48,8 +47,8 @@ router.post('/', async (req, res) => {
             return res.json({ success: true });
         } else if (action === 'fetch') {
             const [messages] = await pool.execute(
-                'SELECT * FROM chat_messages WHERE user_id = ? AND bot_id = ? ORDER BY created_at ASC LIMIT 100',
-                [tgId, botId]
+                'SELECT * FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC LIMIT 100',
+                [tgId]
             );
             return res.json({ success: true, messages });
         }

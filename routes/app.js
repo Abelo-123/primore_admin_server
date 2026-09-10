@@ -8,23 +8,7 @@ const router = Router();
 // get_settings
 router.get('/settings', async (req, res) => {
     try {
-        const initData = req.query.initData || '';
-        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-        const { botId } = getBotIdAndUser(initData, reqBotId);
-        let [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings WHERE bot_id = ?', [botId]);
-        
-        if (rows.length === 0) {
-            // Seed settings by copying settings from another bot if any exist
-            const [anySettings] = await pool.execute('SELECT DISTINCT bot_id FROM settings LIMIT 1');
-            if (anySettings.length > 0) {
-                const sourceBotId = anySettings[0].bot_id;
-                const [sourceRows] = await pool.execute('SELECT setting_key, setting_value FROM settings WHERE bot_id = ?', [sourceBotId]);
-                for (const s of sourceRows) {
-                    await pool.execute('INSERT IGNORE INTO settings (setting_key, bot_id, setting_value) VALUES (?, ?, ?)', [s.setting_key, botId, s.setting_value]);
-                }
-                [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings WHERE bot_id = ?', [botId]);
-            }
-        }
+        let [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings');
 
         const settings = {
             rateMultiplier: 55,
@@ -62,12 +46,8 @@ router.get('/settings', async (req, res) => {
 // get_recommended - now uses top_services_ids from settings
 router.get('/recommended', async (req, res) => {
     try {
-        const initData = req.query.initData || '';
-        const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-        const { botId } = getBotIdAndUser(initData, reqBotId);
         const [rows] = await pool.execute(
-            'SELECT setting_value FROM settings WHERE setting_key = "top_services_ids" AND bot_id = ?',
-            [botId]
+            'SELECT setting_value FROM settings WHERE setting_key = "top_services_ids" LIMIT 1'
         );
         if (rows.length > 0 && rows[0].setting_value) {
             const ids = rows[0].setting_value
@@ -86,13 +66,12 @@ router.get('/recommended', async (req, res) => {
 // get alerts
 router.post('/alerts', async (req, res) => {
     const { initData } = req.body;
-    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-    const { botId, user } = getBotIdAndUser(initData, reqBotId);
+    const { user } = getBotIdAndUser(initData);
     const tgId = user?.id ? String(user.id) : null;
     if (!tgId) return res.json({ success: false, unreadCount: 0, alerts: [] });
 
     try {
-        const [alerts] = await pool.execute('SELECT * FROM alerts WHERE user_id = ? AND bot_id = ? ORDER BY created_at DESC LIMIT 50', [tgId, botId]);
+        const [alerts] = await pool.execute('SELECT * FROM alerts WHERE user_id = ? ORDER BY created_at DESC LIMIT 50', [tgId]);
         const unreadCount = alerts.filter(a => a.is_read === 0 || a.is_read === false).length;
         return res.json({ success: true, unreadCount, alerts });
     } catch (err) {
@@ -104,13 +83,12 @@ router.post('/alerts', async (req, res) => {
 // mark alerts read
 router.post('/alerts/mark-read', async (req, res) => {
     const { initData } = req.body;
-    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-    const { botId, user } = getBotIdAndUser(initData, reqBotId);
+    const { user } = getBotIdAndUser(initData);
     const tgId = user?.id ? String(user.id) : null;
     if (!tgId) return res.json({ success: false });
 
     try {
-        await pool.execute('UPDATE alerts SET is_read = 1 WHERE user_id = ? AND bot_id = ?', [tgId, botId]);
+        await pool.execute('UPDATE alerts SET is_read = 1 WHERE user_id = ?', [tgId]);
         return res.json({ success: true });
     } catch (err) {
         console.error(err);
@@ -121,8 +99,7 @@ router.post('/alerts/mark-read', async (req, res) => {
 // auth (for telegram_auth.php)
 router.post('/auth', async (req, res) => {
     const { initData } = req.body;
-    const reqBotId = req.body?.bot_id || req.query?.bot_id || req.headers?.['x-bot-id'] || null;
-    const { botId, user: tgUser } = getBotIdAndUser(initData, reqBotId);
+    const { user: tgUser } = getBotIdAndUser(initData);
     const tgId = tgUser?.id ? String(tgUser.id) : null;
     
     if (!tgId) return res.status(401).json({ success: false });
@@ -133,20 +110,20 @@ router.post('/auth', async (req, res) => {
     const photoUrl = tgUser.photo_url || '';
 
     try {
-        let [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ? AND bot_id = ?', [tgId, botId]);
+        let [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ?', [tgId]);
         if (users.length === 0) {
             await pool.execute(
-                "INSERT INTO auth (tg_id, bot_id, username, first_name, last_name, photo_url, balance, auth_provider, last_login) VALUES (?, ?, ?, ?, ?, ?, 0.00, 'telegram', NOW())", 
-                [tgId, botId, username, firstName, lastName, photoUrl]
+                "INSERT INTO auth (tg_id, username, first_name, last_name, photo_url, balance, auth_provider, last_login) VALUES (?, ?, ?, ?, ?, 0.00, 'telegram', NOW())", 
+                [tgId, username, firstName, lastName, photoUrl]
             );
-            [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ? AND bot_id = ?', [tgId, botId]);
+            [users] = await pool.execute('SELECT * FROM auth WHERE tg_id = ?', [tgId]);
             
             // Notify new user registration
             notifyNewUser({ uid: tgId, uuid: username || firstName });
         } else {
             await pool.execute(
-                'UPDATE auth SET username = ?, first_name = ?, last_name = ?, photo_url = ?, last_login = NOW() WHERE tg_id = ? AND bot_id = ?', 
-                [username, firstName, lastName, photoUrl, tgId, botId]
+                'UPDATE auth SET username = ?, first_name = ?, last_name = ?, photo_url = ?, last_login = NOW() WHERE tg_id = ?', 
+                [username, firstName, lastName, photoUrl, tgId]
             );
         }
         const user = users[0];
