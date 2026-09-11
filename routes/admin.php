@@ -2302,7 +2302,11 @@ if ($route === '/admin/reseller/withdraw-deposit' && $method === 'POST') {
         
         $pdo->beginTransaction();
         try {
-            
+            // Deduct total_deposit immediately upon withdrawal request
+            $newTotal = max(0.0, $totalDeposit - $amount);
+            $stmt = $pdo->prepare("INSERT INTO settings (setting_key, setting_value) VALUES ('total_deposit', :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
+            $stmt->execute(['val' => (string)$newTotal, 'val_up' => (string)$newTotal]);
+
             // Insert into admin_withdrawals
             $stmt = $pdo->prepare("INSERT INTO admin_withdrawals (amount, bank_name, account_number, account_name, status) VALUES (:amount, :bank, :acc, :name, 'pending')");
             $stmt->execute(['amount' => $amount, 'bank' => $bankName, 'acc' => $accountNumber, 'name' => $accountName]);
@@ -2350,7 +2354,7 @@ if ($route === '/admin/reseller/withdraw-deposit' && $method === 'POST') {
             
             echo json_encode([
                 'success'            => true,
-                'new_total_deposit'  => $totalDeposit,
+                'new_total_deposit'  => $newTotal,
                 'local_id'           => (int)$localId,
                 'joadmin_request_id' => $joadminRequestId,
                 'status'             => 'pending',
@@ -2541,18 +2545,6 @@ if (($route === '/admin/reseller/withdrawal/callback' || $route === '/admin/rese
         // Update status to sent
         $stmt = $pdo->prepare("UPDATE admin_withdrawals SET status = 'sent', sent_at = NOW() WHERE id = :id");
         $stmt->execute(['id' => $localId]);
-        
-        // Decrease total_deposit setting in settings table
-        if ($amount > 0) {
-            $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'total_deposit' LIMIT 1");
-            $stmt->execute();
-            $currentTotal = (float)($stmt->fetchColumn() ?: 0.0);
-            
-            $newTotal = max(0.0, $currentTotal - $amount);
-            
-            $stmt = $pdo->prepare("UPDATE settings SET setting_value = :val WHERE setting_key = 'total_deposit'");
-            $stmt->execute(['val' => (string)$newTotal]);
-        }
         
         $pdo->commit();
         echo json_encode(['success' => true, 'message' => 'Withdrawal completed and marked as sent']);
