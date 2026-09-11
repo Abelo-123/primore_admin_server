@@ -60,7 +60,7 @@ $requestData = array_merge($_GET, $_POST, $requestData);
 // Route mapping to controller files
 if (strpos($route, '/admin/') === 0 || $route === '/admin') {
     require_once __DIR__ . '/routes/admin.php';
-} elseif (strpos($route, '/app/') === 0 || $route === '/app') {
+} elseif (strpos($route, '/app/') === 0 || $route === '/app' || $route === '/auth') {
     require_once __DIR__ . '/routes/app.php';
 } elseif ($route === '/services' || $route === '/categories' || strpos($route, '/services/') === 0) {
     require_once __DIR__ . '/routes/services.php';

@@ -134,8 +134,8 @@ if ($route === '/app/alerts/mark-read') {
     exit;
 }
 
-// Route: /app/auth (POST)
-if ($route === '/app/auth') {
+// Route: /app/auth or /auth (POST)
+if ($route === '/app/auth' || $route === '/auth') {
     $initData = isset($requestData['initData']) ? $requestData['initData'] : '';
     $userIdFallback = isset($requestData['user_id']) ? $requestData['user_id'] : 'unauth_local_user';
     
