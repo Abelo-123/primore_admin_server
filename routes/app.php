@@ -178,7 +178,8 @@ if ($route === '/app/auth') {
             
             // Notify Admin Bot Async/Parallel
             try {
-                notifyNewUser($tgId, $firstName);
+                $displayName = (!empty($username) && $username !== 'local_user') ? "@{$username}" : $firstName;
+                notifyNewUser($tgId, $displayName);
             } catch (Exception $e) {}
             
             // Fetch newly created user
