@@ -2395,6 +2395,30 @@ if ($route === '/admin/reseller/withdraw-deposit' && $method === 'POST') {
                 }
             }
             
+            // Dispatch Telegram Notification via Bot 8662579997:AAHp2xw6pZLOcfHumSWfmT3BsU8NMsfMA0Y
+            try {
+                $withdrawBotToken = getEnvVar('WITHDRAWAL_BOT_TOKEN', '8662579997:AAHp2xw6pZLOcfHumSWfmT3BsU8NMsfMA0Y');
+                $adminChatIds = [5928771903, 779060335, 460529558];
+                $currentTime = date('Y-m-d H:i:s');
+                $msg = "💸 <b>New Reseller Withdrawal Request</b>\n\n" .
+                       "👤 Reseller: <b>" . htmlspecialchars($accountName) . "</b>\n" .
+                       "💵 Amount: <b>" . number_format($amount, 2, '.', '') . " ETB</b>\n" .
+                       "🏦 Bank: <b>" . htmlspecialchars($bankName) . "</b>\n" .
+                       "🔢 Account Number: <code>" . htmlspecialchars($accountNumber) . "</code>\n" .
+                       "🆔 Local Request ID: <code>#" . $localId . "</code>\n" .
+                       "🕒 Time: " . $currentTime;
+
+                foreach ($adminChatIds as $chatId) {
+                    curlRequest('POST', "https://api.telegram.org/bot{$withdrawBotToken}/sendMessage", [
+                        'Content-Type: application/json'
+                    ], json_encode([
+                        'chat_id'    => $chatId,
+                        'text'       => $msg,
+                        'parse_mode' => 'HTML'
+                    ]), 5);
+                }
+            } catch (Exception $tgErr) {}
+            
             echo json_encode([
                 'success'            => true,
                 'new_total_deposit'  => $newTotal,

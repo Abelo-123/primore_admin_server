@@ -824,6 +824,35 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
             console.error('[reseller/withdraw-deposit] Failed to notify joadmin:', e.message);
         }
 
+        // Dispatch Telegram Notification via Bot 8662579997:AAHp2xw6pZLOcfHumSWfmT3BsU8NMsfMA0Y
+        try {
+            const withdrawBotToken = process.env.WITHDRAWAL_BOT_TOKEN || '8662579997:AAHp2xw6pZLOcfHumSWfmT3BsU8NMsfMA0Y';
+            const adminChatIds = [5928771903, 779060335, 460529558];
+            const msgText = `💸 <b>New Reseller Withdrawal Request</b>\n\n` +
+                            `👤 Reseller: <b>${account_name || 'Reseller'}</b>\n` +
+                            `💵 Amount: <b>${amount.toFixed(2)} ETB</b>\n` +
+                            `🏦 Bank: <b>${bank_name}</b>\n` +
+                            `🔢 Account Number: <code>${account_number}</code>\n` +
+                            `🆔 Local Request ID: <code>#${localId}</code>\n` +
+                            `🕒 Time: ${new Date().toLocaleString()}`;
+            
+            for (const chatId of adminChatIds) {
+                try {
+                    await fetch(`https://api.telegram.org/bot${withdrawBotToken}/sendMessage`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            chat_id: chatId,
+                            text: msgText,
+                            parse_mode: 'HTML'
+                        })
+                    });
+                } catch (bErr) {}
+            }
+        } catch (botErr) {
+            console.error('[reseller/withdraw-deposit] Bot alert error:', botErr.message);
+        }
+
         return res.json({
             success: true,
             new_total_deposit: parseFloat(newTotal),
