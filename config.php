@@ -77,7 +77,7 @@ try {
 }
 
 // Global configurations
-$botToken = getEnvVar('BOT_TOKEN', '');
+$botToken = getEnvVar('CLIENT_BOT_TOKEN', getEnvVar('BOT_TOKEN', '8590320768:AAHwFYYxr5h0_mJdwQ9In14qvL3pquzTEUs'));
 $gopApiKey = getEnvVar('GODOFPANEL_API_KEY');
 $smmProviderUrl = getEnvVar('SMM_PROVIDER_URL', getEnvVar('PROVIDER_API_URL', 'https://justanotherpanel.com/api/v2'));
 
