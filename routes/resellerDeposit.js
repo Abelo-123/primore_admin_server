@@ -291,4 +291,33 @@ router.get('/public-status', async (req, res) => {
     }
 });
 
+// ─── POST /update-status — Update balance & total deposit remotely ─
+router.post('/update-status', async (req, res) => {
+    const providedKey = req.query.key || req.headers['x-api-key'] || '';
+    if (!JOADMIN_API_KEY || providedKey !== JOADMIN_API_KEY) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    try {
+        const { reseller_balance, total_deposit } = req.body;
+        if (reseller_balance !== undefined) {
+            const bal = parseFloat(reseller_balance) || 0;
+            await pool.execute(
+                'INSERT INTO settings (setting_key, setting_value) VALUES ("reseller_balance", ?) ON DUPLICATE KEY UPDATE setting_value = ?',
+                [bal.toFixed(2), bal.toFixed(2)]
+            );
+        }
+        if (total_deposit !== undefined) {
+            const dep = parseFloat(total_deposit) || 0;
+            await pool.execute(
+                'INSERT INTO settings (setting_key, setting_value) VALUES ("total_deposit", ?) ON DUPLICATE KEY UPDATE setting_value = ?',
+                [dep.toFixed(2), dep.toFixed(2)]
+            );
+        }
+        return res.json({ success: true, message: 'Reseller balance & total deposit updated successfully' });
+    } catch (err) {
+        console.error('[reseller/update-status]', err);
+        return res.status(500).json({ error: 'Failed to update status' });
+    }
+});
+
 export default router;

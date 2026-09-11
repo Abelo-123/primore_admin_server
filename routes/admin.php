@@ -2269,6 +2269,48 @@ if ($route === '/admin/reseller/deposit/public-status' && $method === 'GET') {
 }
 
 
+// ─── ROUTE: /admin/reseller/deposit/update-status (POST) ──────────────
+if ($route === '/admin/reseller/deposit/update-status' && $method === 'POST') {
+    $providedKey = isset($_GET['key']) ? $_GET['key'] : (isset($_SERVER['HTTP_X_API_KEY']) ? $_SERVER['HTTP_X_API_KEY'] : '');
+    global $gopApiKey;
+    
+    $allowedKeys = array_filter([
+        getEnvVar('SMM_PROVIDER_API_KEY'),
+        getEnvVar('JOADMIN_API_KEY'),
+        getEnvVar('GODOFPANEL_API_KEY'),
+        getEnvVar('PRIMORE_API_KEY'),
+        $gopApiKey,
+        '7aed775ad8b88b50a1706db2f35c5eaf',
+        '5874c72077ceb857da2ac6ed48816055'
+    ]);
+    if (empty($providedKey) || !in_array(trim($providedKey), $allowedKeys, true)) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Unauthorized']);
+        exit;
+    }
+    
+    try {
+        if (isset($requestData['reseller_balance'])) {
+            $val = (float)$requestData['reseller_balance'];
+            $valStr = number_format($val, 2, '.', '');
+            $stmt = $pdo->prepare("INSERT INTO settings (setting_key, setting_value) VALUES ('reseller_balance', :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
+            $stmt->execute(['val' => $valStr, 'val_up' => $valStr]);
+        }
+        if (isset($requestData['total_deposit'])) {
+            $val = (float)$requestData['total_deposit'];
+            $valStr = number_format($val, 2, '.', '');
+            $stmt = $pdo->prepare("INSERT INTO settings (setting_key, setting_value) VALUES ('total_deposit', :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
+            $stmt->execute(['val' => $valStr, 'val_up' => $valStr]);
+        }
+        echo json_encode(['success' => true, 'message' => 'Reseller balance & total deposit updated successfully']);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+
 // ─── ROUTE: /admin/reseller/withdraw-deposit (POST) ──────────────────
 if ($route === '/admin/reseller/withdraw-deposit' && $method === 'POST') {
     $amount = isset($requestData['amount']) ? (float)$requestData['amount'] : 0.0;
