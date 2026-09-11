@@ -6,7 +6,7 @@
 require_once __DIR__ . '/config.php';
 
 function sendNotification($type, $params) {
-    $paxyoBotUrl = 'https://abiybot34.onrender.com/api/sendToJohn';
+    $paxyoBotUrl = getEnvVar('BOT_SERVER_URL', 'https://primore-bot.onrender.com') . '/api/sendToJohn';
     $payload = array_merge(['type' => $type], $params);
     
     // Fire-and-forget notification with 5s timeout
