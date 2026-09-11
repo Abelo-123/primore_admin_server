@@ -838,6 +838,19 @@ router.post('/reseller/withdraw-deposit', async (req, res) => {
     }
 });
 
+// ─── GET /reseller/withdrawal-history ────────────────────────────────
+router.get('/reseller/withdrawal-history', async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            'SELECT * FROM admin_withdrawals ORDER BY created_at DESC LIMIT 100'
+        );
+        return res.json({ success: true, withdrawals: rows });
+    } catch (err) {
+        console.error('[admin/reseller/withdrawal-history]', err);
+        return res.status(500).json({ success: false, error: 'Failed to load withdrawal history' });
+    }
+});
+
 // ─── Custom Services & Activity ────────────────────────────────────
 router.get('/services/custom', async (req, res) => {
     try {
