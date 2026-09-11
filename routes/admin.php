@@ -130,7 +130,8 @@ if (
     $route !== '/admin/reseller/withdrawal/callback' &&
     $route !== '/admin/reseller/withdrawal/confirm' &&
     $route !== '/admin/reseller/withdrawal-history' &&
-    $route !== '/admin/reseller/status'
+    $route !== '/admin/reseller/status' &&
+    $route !== '/admin/reseller/deposit/update-status'
 ) {
     $effective = getEffectiveAdminPassword();
     if (empty($providedPass) || $providedPass !== $effective) {
