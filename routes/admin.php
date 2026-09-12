@@ -859,7 +859,7 @@ if ($route === '/admin/settings') {
 if ($route === '/admin/services/custom') {
     if ($method === 'GET') {
         try {
-            $stmt = $pdo->prepare('SELECT * FROM service_custom ORDER BY updated_at DESC');
+            $stmt = $pdo->prepare('SELECT * FROM service_custom ORDER BY id DESC');
             $stmt->execute();
             $rows = $stmt->fetchAll();
             
@@ -891,14 +891,13 @@ if ($route === '/admin/services/custom') {
             }
 
             $stmt = $pdo->prepare('
-                INSERT INTO service_custom (service_id, custom_rate, profit_margin, is_enabled, custom_description, updated_at) 
-                VALUES (:service_id, :custom_rate, :profit_margin, :is_enabled, :desc, NOW()) 
+                INSERT INTO service_custom (service_id, custom_rate, profit_margin, is_enabled, custom_description) 
+                VALUES (:service_id, :custom_rate, :profit_margin, :is_enabled, :desc) 
                 ON DUPLICATE KEY UPDATE 
                 custom_rate = :custom_rate_update,
                 profit_margin = :profit_margin_update,
                 is_enabled = :is_enabled_update,
-                custom_description = :desc_update,
-                updated_at = NOW()
+                custom_description = :desc_update
             ');
             $stmt->execute([
                 'service_id'           => $serviceId,
@@ -949,7 +948,7 @@ if ($route === '/admin/services/activity' && $method === 'GET') {
             SELECT sc.*, a.username, a.first_name 
             FROM service_custom sc 
             LEFT JOIN auth a ON sc.updated_by = a.tg_id
-            ORDER BY sc.updated_at DESC LIMIT 20
+            ORDER BY sc.id DESC LIMIT 20
         ');
         $stmt->execute();
         $rows = $stmt->fetchAll();
@@ -971,7 +970,7 @@ if ($route === '/admin/services/activity' && $method === 'GET') {
 // ─── ROUTE: /admin/services/disabled (GET) ───────────────────────
 if ($route === '/admin/services/disabled' && $method === 'GET') {
     try {
-        $stmt = $pdo->prepare('SELECT * FROM service_custom WHERE is_enabled = 0 ORDER BY updated_at DESC');
+        $stmt = $pdo->prepare('SELECT * FROM service_custom WHERE is_enabled = 0 ORDER BY id DESC');
         $stmt->execute();
         $rows = $stmt->fetchAll();
         foreach ($rows as &$r) {

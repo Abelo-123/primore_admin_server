@@ -883,11 +883,11 @@ router.get('/reseller/withdrawal-history', async (req, res) => {
 // ─── Custom Services & Activity ────────────────────────────────────
 router.get('/services/custom', async (req, res) => {
     try {
-        const [rows] = await pool.execute('SELECT * FROM service_custom ORDER BY updated_at DESC');
+        const [rows] = await pool.execute('SELECT * FROM service_custom ORDER BY id DESC');
         return res.json(rows);
     } catch (err) {
         console.error('[admin/services/custom]', err);
-        return res.status(500).json({ error: 'Failed to load custom pricing' });
+        return res.status(500).json({ error: 'Failed to load custom pricing', details: err.message });
     }
 });
 
@@ -912,7 +912,7 @@ router.post('/services/custom', async (req, res) => {
         return res.json({ success: true });
     } catch (err) {
         console.error('[admin/services/custom]', err);
-        return res.status(500).json({ error: 'Failed to update custom pricing' });
+        return res.status(500).json({ error: 'Failed to update custom pricing', details: err.message });
     }
 });
 
@@ -923,7 +923,7 @@ router.delete('/services/custom/:serviceId', async (req, res) => {
         return res.json({ success: true });
     } catch (err) {
         console.error('[admin/services/custom]', err);
-        return res.status(500).json({ error: 'Failed to delete custom pricing' });
+        return res.status(500).json({ error: 'Failed to delete custom pricing', details: err.message });
     }
 });
 
@@ -933,24 +933,24 @@ router.get('/services/activity', async (req, res) => {
             `SELECT sc.*, a.username, a.first_name 
              FROM service_custom sc 
              LEFT JOIN auth a ON sc.updated_by = a.tg_id
-             ORDER BY sc.updated_at DESC LIMIT 20`
+             ORDER BY sc.id DESC LIMIT 20`
         );
         return res.json(rows);
     } catch (err) {
         console.error('[admin/services/activity]', err);
-        return res.status(500).json({ error: 'Failed to load activity' });
+        return res.status(500).json({ error: 'Failed to load activity', details: err.message });
     }
 });
 
 router.get('/services/disabled', async (req, res) => {
     try {
         const [rows] = await pool.execute(
-            'SELECT * FROM service_custom WHERE is_enabled = FALSE ORDER BY updated_at DESC'
+            'SELECT * FROM service_custom WHERE is_enabled = FALSE OR is_enabled = 0 ORDER BY id DESC'
         );
         return res.json(rows);
     } catch (err) {
         console.error('[admin/services/disabled]', err);
-        return res.status(500).json({ error: 'Failed to load disabled services' });
+        return res.status(500).json({ error: 'Failed to load disabled services', details: err.message });
     }
 });
 

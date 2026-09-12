@@ -97,10 +97,18 @@ const app = express();
             try { await conn.execute("ALTER TABLE broadcasts ADD COLUMN btn_url VARCHAR(512) DEFAULT 'https://primora-client.onrender.com'"); } catch (e) {}
             try { await conn.execute("ALTER TABLE broadcast_messages ADD COLUMN custom_message TEXT DEFAULT NULL"); } catch (e) {}
 
-            // Ensure custom_description column exists in service_custom
+            // Ensure custom_description, updated_at, and updated_by columns exist in service_custom
             try {
                 await conn.execute('ALTER TABLE service_custom ADD COLUMN custom_description TEXT');
                 console.log('[Startup] Checked/Added custom_description column to service_custom table');
+            } catch (e) {}
+            try {
+                await conn.execute('ALTER TABLE service_custom ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+                console.log('[Startup] Checked/Added updated_at column to service_custom table');
+            } catch (e) {}
+            try {
+                await conn.execute('ALTER TABLE service_custom ADD COLUMN updated_by VARCHAR(255) DEFAULT NULL');
+                console.log('[Startup] Checked/Added updated_by column to service_custom table');
             } catch (e) {}
 
             // Ensure transactions table exists with correct schema
