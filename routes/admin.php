@@ -944,14 +944,20 @@ if (strpos($route, '/admin/services/custom/') === 0 && $method === 'DELETE') {
 // ─── ROUTE: /admin/services/activity (GET) ───────────────────────
 if ($route === '/admin/services/activity' && $method === 'GET') {
     try {
-        $stmt = $pdo->prepare('
-            SELECT sc.*, a.username, a.first_name 
-            FROM service_custom sc 
-            LEFT JOIN auth a ON sc.updated_by = a.tg_id
-            ORDER BY sc.id DESC LIMIT 20
-        ');
-        $stmt->execute();
-        $rows = $stmt->fetchAll();
+        try {
+            $stmt = $pdo->prepare('
+                SELECT sc.*, a.username, a.first_name 
+                FROM service_custom sc 
+                LEFT JOIN auth a ON sc.updated_by = a.tg_id
+                ORDER BY sc.id DESC LIMIT 20
+            ');
+            $stmt->execute();
+            $rows = $stmt->fetchAll();
+        } catch (Exception $joinErr) {
+            $stmt = $pdo->prepare('SELECT * FROM service_custom ORDER BY id DESC LIMIT 20');
+            $stmt->execute();
+            $rows = $stmt->fetchAll();
+        }
         foreach ($rows as &$r) {
             $r['id'] = (int)$r['id'];
             $r['service_id'] = (int)$r['service_id'];

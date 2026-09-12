@@ -929,13 +929,20 @@ router.delete('/services/custom/:serviceId', async (req, res) => {
 
 router.get('/services/activity', async (req, res) => {
     try {
-        const [rows] = await pool.execute(
-            `SELECT sc.*, a.username, a.first_name 
-             FROM service_custom sc 
-             LEFT JOIN auth a ON sc.updated_by = a.tg_id
-             ORDER BY sc.id DESC LIMIT 20`
-        );
-        return res.json(rows);
+        try {
+            const [rows] = await pool.execute(
+                `SELECT sc.*, a.username, a.first_name 
+                 FROM service_custom sc 
+                 LEFT JOIN auth a ON sc.updated_by = a.tg_id
+                 ORDER BY sc.id DESC LIMIT 20`
+            );
+            return res.json(rows);
+        } catch (joinErr) {
+            const [rows] = await pool.execute(
+                'SELECT * FROM service_custom ORDER BY id DESC LIMIT 20'
+            );
+            return res.json(rows);
+        }
     } catch (err) {
         console.error('[admin/services/activity]', err);
         return res.status(500).json({ error: 'Failed to load activity', details: err.message });
