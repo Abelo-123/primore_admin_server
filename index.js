@@ -321,6 +321,19 @@ app.post('/api/admin/reseller/send-direct-sms', async (req, res) => {
     }
 });
 
+// App-level Holidays Endpoint — bypasses router ordering issues
+app.get('/api/admin/holidays', async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            'SELECT * FROM holidays ORDER BY start_date ASC, id DESC'
+        );
+        return res.json({ success: true, holidays: rows });
+    } catch (err) {
+        console.error('[admin/holidays GET]', err);
+        return res.status(500).json({ error: 'Failed to load holidays' });
+    }
+});
+
 app.use('/api/admin', adminRouter);
 app.use('/api/admin/reseller/deposit', resellerDepositRouter);
 app.use('/api/test', testNotifyRouter);
