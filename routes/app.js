@@ -36,6 +36,17 @@ router.get('/settings', async (req, res) => {
             }
         });
 
+        // Always check if there is an active holiday in the holidays table
+        try {
+            const [activeHolidays] = await pool.execute("SELECT name, discount_percent FROM holidays WHERE status = 'active' ORDER BY id DESC LIMIT 1");
+            if (activeHolidays.length > 0) {
+                settings.discountPercent = parseFloat(activeHolidays[0].discount_percent) || 0;
+                settings.holidayName = activeHolidays[0].name || '';
+            }
+        } catch (hErr) {
+            console.error('[GET /settings] Active holiday check notice:', hErr.message);
+        }
+
         return res.json(settings);
     } catch (err) {
         console.error(err);

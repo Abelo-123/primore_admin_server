@@ -683,67 +683,20 @@ router.get('/settings', async (req, res) => {
     }
 });
 
-function formatSqlDate(dateStr) {
-    if (!dateStr) return null;
-    if (typeof dateStr === 'string' && dateStr.includes('T')) {
-        return dateStr.split('T')[0];
-    }
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return String(dateStr).substring(0, 10);
-    return d.toISOString().split('T')[0];
-}
-
 router.post('/settings', async (req, res) => {
     try {
         const { key, value } = req.body;
         if (!key) return res.status(400).json({ error: 'key is required' });
 
-        let cleanValue = value;
-        if (typeof value === 'string' && (key.includes('date') || (value.includes('T') && value.endsWith('Z')))) {
-            cleanValue = formatSqlDate(value);
-        }
-
         await pool.execute(
             'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
-            [key, cleanValue, cleanValue]
+            [key, value, value]
         );
 
-        return res.json({ success: true, value: cleanValue });
+        return res.json({ success: true });
     } catch (err) {
         console.error('[admin/settings]', err);
         return res.status(500).json({ error: 'Failed to update setting' });
-    }
-});
-
-// ─── Holidays Endpoint (with ISO date sanitization) ───
-router.post('/holidays', async (req, res) => {
-    try {
-        const { name, discount_rate, category, start_date, end_date, description, is_active } = req.body;
-        const cleanStartDate = formatSqlDate(start_date);
-        const cleanEndDate = formatSqlDate(end_date);
-
-        await pool.execute(
-            `INSERT INTO settings (setting_key, setting_value) VALUES ('holiday_name', ?) ON DUPLICATE KEY UPDATE setting_value = ?`,
-            [name || '', name || '']
-        );
-
-        if (cleanStartDate) {
-            await pool.execute(
-                `INSERT INTO settings (setting_key, setting_value) VALUES ('holiday_start_date', ?) ON DUPLICATE KEY UPDATE setting_value = ?`,
-                [cleanStartDate, cleanStartDate]
-            );
-        }
-        if (cleanEndDate) {
-            await pool.execute(
-                `INSERT INTO settings (setting_key, setting_value) VALUES ('holiday_end_date', ?) ON DUPLICATE KEY UPDATE setting_value = ?`,
-                [cleanEndDate, cleanEndDate]
-            );
-        }
-
-        return res.json({ success: true, message: 'Holiday saved successfully', start_date: cleanStartDate, end_date: cleanEndDate });
-    } catch (err) {
-        console.error('[admin/holidays]', err);
-        return res.status(500).json({ error: 'Failed to save holiday: ' + err.message });
     }
 });
 
@@ -1751,6 +1704,132 @@ router.delete('/broadcasts/messages/:msg_id', async (req, res) => {
     } catch (err) {
         console.error('[admin/broadcasts/messages/:msg_id DELETE]', err);
         return res.status(500).json({ error: 'Failed to delete user message' });
+    }
+});
+
+// ─── Holidays Routes ──────────────────────────────────────────────
+router.get('/holidays', async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            'SELECT * FROM holidays ORDER BY start_date ASC, id DESC'
+        );
+        return res.json({ success: true, holidays: rows });
+    } catch (err) {
+        console.error('[admin/holidays GET]', err);
+        return res.status(500).json({ error: 'Failed to load holidays' });
+    }
+});
+
+router.post('/holidays', async (req, res) => {
+    try {
+        const { id, name, discount_percent, status, start_date, end_date, category, is_recurring, description } = req.body;
+        if (!name) {
+            return res.status(400).json({ error: 'Holiday name is required' });
+        }
+
+        const disc = parseInt(discount_percent || 0, 10);
+        const stat = status === 'active' ? 'active' : 'inactive';
+        const cat = category || 'custom';
+        const recur = is_recurring === false || is_recurring === 0 ? 0 : 1;
+        const desc = description || '';
+
+        if (id) {
+            await pool.execute(
+                `UPDATE holidays 
+                 SET name = ?, discount_percent = ?, status = ?, start_date = ?, end_date = ?, category = ?, is_recurring = ?, description = ?
+                 WHERE id = ?`,
+                [name, disc, stat, start_date || null, end_date || null, cat, recur, desc, id]
+            );
+        } else {
+            await pool.execute(
+                `INSERT INTO holidays (name, discount_percent, status, start_date, end_date, category, is_recurring, description) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [name, disc, stat, start_date || null, end_date || null, cat, recur, desc]
+            );
+        }
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('[admin/holidays POST]', err);
+        return res.status(500).json({ error: 'Failed to save holiday' });
+    }
+});
+
+router.delete('/holidays/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await pool.execute('DELETE FROM holidays WHERE id = ?', [id]);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('[admin/holidays DELETE]', err);
+        return res.status(500).json({ error: 'Failed to delete holiday' });
+    }
+});
+
+router.post('/holidays/:id/toggle', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [rows] = await pool.execute('SELECT * FROM holidays WHERE id = ?', [id]);
+        if (!rows[0]) {
+            return res.status(404).json({ error: 'Holiday not found' });
+        }
+
+        const newStatus = rows[0].status === 'active' ? 'inactive' : 'active';
+        await pool.execute('UPDATE holidays SET status = ? WHERE id = ?', [newStatus, id]);
+
+        if (newStatus === 'active') {
+            try {
+                await pool.execute(
+                    'INSERT INTO settings (setting_key, setting_value) VALUES ("holiday_name", ?), ("discount_percent", ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
+                    [rows[0].name, String(rows[0].discount_percent)]
+                );
+            } catch (sErr) {
+                console.error('[admin/holidays toggle settings sync notice]', sErr.message);
+            }
+        }
+
+        return res.json({ success: true, status: newStatus });
+    } catch (err) {
+        console.error('[admin/holidays toggle]', err);
+        return res.status(500).json({ error: 'Failed to toggle holiday' });
+    }
+});
+
+router.post('/holidays/seed-presets', async (req, res) => {
+    try {
+        const presets = [
+            { name: 'Enkutatash (Ethiopian New Year)', discount_percent: 15, category: 'ethiopian', start_date: '2026-09-11', end_date: '2026-09-12', description: 'Celebrate the Ethiopian New Year with 15% off across all services!' },
+            { name: 'Meskel', discount_percent: 10, category: 'ethiopian', start_date: '2026-09-27', end_date: '2026-09-28', description: 'Finding of the True Cross celebration discount.' },
+            { name: 'Genna (Ethiopian Christmas)', discount_percent: 20, category: 'ethiopian', start_date: '2027-01-07', end_date: '2027-01-08', description: 'Merry Christmas! Enjoy 20% off all orders.' },
+            { name: 'Timkat (Epiphany)', discount_percent: 15, category: 'ethiopian', start_date: '2027-01-19', end_date: '2027-01-20', description: 'Epiphany special celebration discount.' },
+            { name: 'Adwa Victory Day', discount_percent: 10, category: 'ethiopian', start_date: '2027-03-02', end_date: '2027-03-02', description: 'Celebrating Victory of Adwa with 10% discount.' },
+            { name: 'Siklet (Good Friday)', discount_percent: 10, category: 'ethiopian', start_date: '2027-04-30', end_date: '2027-04-30', description: 'Good Friday special rate reduction.' },
+            { name: 'Fasika (Ethiopian Easter)', discount_percent: 25, category: 'ethiopian', start_date: '2027-05-02', end_date: '2027-05-03', description: 'Happy Easter! Huge 25% discount on all SMM boost packages.' },
+            { name: 'Patriots Victory Day', discount_percent: 10, category: 'ethiopian', start_date: '2027-05-05', end_date: '2027-05-05', description: 'Patriots Victory Day special rate.' },
+            { name: 'Eid al-Fitr', discount_percent: 15, category: 'international', start_date: '2027-03-10', end_date: '2027-03-11', description: 'Eid Mubarak! Special 15% discount.' },
+            { name: 'Eid al-Adha', discount_percent: 15, category: 'international', start_date: '2027-05-16', end_date: '2027-05-17', description: 'Eid Mubarak! Special holiday reduction.' },
+            { name: 'Mawlid', discount_percent: 10, category: 'international', start_date: '2026-09-15', end_date: '2026-09-16', description: 'Prophet Birthday celebration discount.' },
+            { name: 'Launch Super Sale 🚀', discount_percent: 20, category: 'custom', start_date: null, end_date: null, description: 'Primora Launch special promotion.' },
+            { name: 'Weekend Flash Boost ⚡', discount_percent: 10, category: 'custom', start_date: null, end_date: null, description: 'Flash weekend boost discount.' }
+        ];
+
+        let addedCount = 0;
+        for (const item of presets) {
+            const [existing] = await pool.execute('SELECT id FROM holidays WHERE name = ?', [item.name]);
+            if (existing.length === 0) {
+                await pool.execute(
+                    `INSERT INTO holidays (name, discount_percent, status, start_date, end_date, category, is_recurring, description) 
+                     VALUES (?, ?, 'inactive', ?, ?, ?, 1, ?)`,
+                    [item.name, item.discount_percent, item.start_date, item.end_date, item.category, item.description]
+                );
+                addedCount++;
+            }
+        }
+
+        return res.json({ success: true, added: addedCount, message: `Added ${addedCount} new holiday presets.` });
+    } catch (err) {
+        console.error('[admin/holidays seed-presets]', err);
+        return res.status(500).json({ error: 'Failed to seed holiday presets' });
     }
 });
 

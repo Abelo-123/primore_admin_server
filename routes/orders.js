@@ -82,7 +82,20 @@ router.post('/place', async (req, res) => {
             // Calculate cost
             const unitRateUsd = parseFloat(serviceData.rate);
             const totalCostUsd = unitRateUsd * (quantity / 1000);
-            const totalCostEtb = totalCostUsd * rateMultiplier;
+            let totalCostEtb = totalCostUsd * rateMultiplier;
+
+            // Apply active holiday discount if available
+            try {
+                const [activeHolidays] = await conn.execute("SELECT discount_percent FROM holidays WHERE status = 'active' ORDER BY id DESC LIMIT 1");
+                if (activeHolidays.length > 0) {
+                    const discountPercent = parseFloat(activeHolidays[0].discount_percent) || 0;
+                    if (discountPercent > 0 && discountPercent < 100) {
+                        totalCostEtb = totalCostEtb * (1 - discountPercent / 100);
+                    }
+                }
+            } catch (hErr) {
+                console.error('[place_order] Active holiday discount calculation notice:', hErr.message);
+            }
 
             if (parseFloat(user.balance) < totalCostEtb) {
                 await conn.rollback();

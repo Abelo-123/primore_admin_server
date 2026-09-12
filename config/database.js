@@ -36,6 +36,21 @@ pool.getConnection()
                 )
             `);
             console.log('✅ chat_messages table ready');
+
+            await conn.execute(`
+                CREATE TABLE IF NOT EXISTS holidays (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    discount_percent INT DEFAULT 0,
+                    status VARCHAR(50) DEFAULT 'inactive',
+                    start_date DATE DEFAULT NULL,
+                    end_date DATE DEFAULT NULL,
+                    category VARCHAR(50) DEFAULT 'custom',
+                    is_recurring TINYINT DEFAULT 1,
+                    description TEXT
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            `);
+            console.log('✅ holidays table ready');
         } catch (e) {
             console.error('❌ Failed to verify chat_messages table', e.message);
         }
