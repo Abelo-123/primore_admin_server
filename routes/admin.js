@@ -683,20 +683,67 @@ router.get('/settings', async (req, res) => {
     }
 });
 
+function formatSqlDate(dateStr) {
+    if (!dateStr) return null;
+    if (typeof dateStr === 'string' && dateStr.includes('T')) {
+        return dateStr.split('T')[0];
+    }
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return String(dateStr).substring(0, 10);
+    return d.toISOString().split('T')[0];
+}
+
 router.post('/settings', async (req, res) => {
     try {
         const { key, value } = req.body;
         if (!key) return res.status(400).json({ error: 'key is required' });
 
+        let cleanValue = value;
+        if (typeof value === 'string' && (key.includes('date') || (value.includes('T') && value.endsWith('Z')))) {
+            cleanValue = formatSqlDate(value);
+        }
+
         await pool.execute(
             'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = ?',
-            [key, value, value]
+            [key, cleanValue, cleanValue]
         );
 
-        return res.json({ success: true });
+        return res.json({ success: true, value: cleanValue });
     } catch (err) {
         console.error('[admin/settings]', err);
         return res.status(500).json({ error: 'Failed to update setting' });
+    }
+});
+
+// ─── Holidays Endpoint (with ISO date sanitization) ───
+router.post('/holidays', async (req, res) => {
+    try {
+        const { name, discount_rate, category, start_date, end_date, description, is_active } = req.body;
+        const cleanStartDate = formatSqlDate(start_date);
+        const cleanEndDate = formatSqlDate(end_date);
+
+        await pool.execute(
+            `INSERT INTO settings (setting_key, setting_value) VALUES ('holiday_name', ?) ON DUPLICATE KEY UPDATE setting_value = ?`,
+            [name || '', name || '']
+        );
+
+        if (cleanStartDate) {
+            await pool.execute(
+                `INSERT INTO settings (setting_key, setting_value) VALUES ('holiday_start_date', ?) ON DUPLICATE KEY UPDATE setting_value = ?`,
+                [cleanStartDate, cleanStartDate]
+            );
+        }
+        if (cleanEndDate) {
+            await pool.execute(
+                `INSERT INTO settings (setting_key, setting_value) VALUES ('holiday_end_date', ?) ON DUPLICATE KEY UPDATE setting_value = ?`,
+                [cleanEndDate, cleanEndDate]
+            );
+        }
+
+        return res.json({ success: true, message: 'Holiday saved successfully', start_date: cleanStartDate, end_date: cleanEndDate });
+    } catch (err) {
+        console.error('[admin/holidays]', err);
+        return res.status(500).json({ error: 'Failed to save holiday: ' + err.message });
     }
 });
 
