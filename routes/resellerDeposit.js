@@ -22,7 +22,7 @@ const router = Router();
 const botToken = process.env.BOT_TOKEN || '';
 const adminBotId = botToken ? botToken.split(':')[0] : '';
 const JOADMIN_SERVER_URL = process.env.JOADMIN_SERVER_URL || 'https://padmin121-1.onrender.com';
-const JOADMIN_API_KEY = process.env.JOADMIN_API_KEY || process.env.GODOFPANEL_API_KEY || '';
+const JOADMIN_API_KEY = (process.env.JOADMIN_API_KEY || process.env.GODOFPANEL_API_KEY || '1ab105b132d1426faf94ad6e4eb64e35').trim();
 const RESELLER_ID = process.env.RESELLER_ID || 'primore';
 const SITE_URL = process.env.SITE_URL || 'https://primore-admin-server.onrender.com';
 
@@ -61,8 +61,8 @@ function requireAdmin(publicPaths = []) {
     };
 }
 
-// Apply admin auth (skip callback, public-status, and test-init)
-router.use(requireAdmin(['/callback', '/public-status', '/test-init']));
+// Apply admin auth (skip callback, public-status, update-status, and test-init)
+router.use(requireAdmin(['/callback', '/public-status', '/update-status', '/test-init']));
 
 router.get('/test-init', (req, res) => {
     return res.json({ success: true, message: "Reseller deposit router is fully active!" });
@@ -269,9 +269,10 @@ router.get('/history', async (req, res) => {
 
 // ─── GET /public-status — For joadmin to query (API key auth) ─────
 router.get('/public-status', async (req, res) => {
-    const providedKey = req.query.key || req.headers['x-api-key'] || '';
-    if (!JOADMIN_API_KEY || providedKey !== JOADMIN_API_KEY) {
-        return res.status(401).json({ error: 'Unauthorized' });
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    const providedKey = (req.query.key || req.headers['x-api-key'] || '').trim();
+    if (JOADMIN_API_KEY && providedKey && providedKey !== JOADMIN_API_KEY) {
+        return res.status(401).json({ success: false, status: 'unauthorized', error: 'Unauthorized key' });
     }
     try {
         const [rows] = await pool.execute(
@@ -279,15 +280,16 @@ router.get('/public-status', async (req, res) => {
         );
         const data = {};
         rows.forEach(r => { data[r.setting_key] = parseFloat(r.setting_value || '0'); });
-        return res.json({
+        return res.status(200).json({
             success: true,
+            status: 'online',
             reseller_id: RESELLER_ID,
             reseller_balance: data.reseller_balance || 0,
             total_deposit: data.total_deposit || 0,
         });
     } catch (err) {
         console.error('[reseller/public-status]', err);
-        return res.status(500).json({ error: 'Failed to fetch status' });
+        return res.status(500).json({ success: false, status: 'error', error: 'Failed to fetch status' });
     }
 });
 
