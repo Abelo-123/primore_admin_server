@@ -207,6 +207,22 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
+app.get('/api/debug-db-info', async (req, res) => {
+    try {
+        const [rows] = await pool.execute('SELECT setting_key, setting_value FROM settings');
+        const [holidays] = await pool.execute('SELECT * FROM holidays');
+        res.json({
+            host: process.env.DB_HOST,
+            name: process.env.DB_NAME,
+            settingsCount: rows.length,
+            rows,
+            holidays
+        });
+    } catch (e) {
+        res.json({ error: e.message });
+    }
+});
+
 app.get('/api/debug/env', (req, res) => {
     const maskedEnv = {};
     const sensitiveKeywords = [
