@@ -1714,6 +1714,36 @@ router.delete('/broadcasts/messages/:msg_id', async (req, res) => {
     }
 });
 
+// Helper to sync active holiday in holidays table with settings table
+async function syncActiveHolidayToSettings() {
+    try {
+        const [activeRows] = await pool.execute(
+            "SELECT name, discount_percent FROM holidays WHERE status = 'active' ORDER BY id DESC LIMIT 1"
+        );
+        if (activeRows.length > 0) {
+            const hName = activeRows[0].name || '';
+            const hDisc = String(activeRows[0].discount_percent || 0);
+            await pool.execute(
+                "INSERT INTO settings (setting_key, setting_value) VALUES ('holiday_name', ?) ON DUPLICATE KEY UPDATE setting_value = ?",
+                [hName, hName]
+            );
+            await pool.execute(
+                "INSERT INTO settings (setting_key, setting_value) VALUES ('discount_percent', ?) ON DUPLICATE KEY UPDATE setting_value = ?",
+                [hDisc, hDisc]
+            );
+        } else {
+            await pool.execute(
+                "INSERT INTO settings (setting_key, setting_value) VALUES ('holiday_name', '') ON DUPLICATE KEY UPDATE setting_value = ''"
+            );
+            await pool.execute(
+                "INSERT INTO settings (setting_key, setting_value) VALUES ('discount_percent', '0') ON DUPLICATE KEY UPDATE setting_value = '0'"
+            );
+        }
+    } catch (err) {
+        console.error('[syncActiveHolidayToSettings] Error:', err.message);
+    }
+}
+
 // ─── Holidays Routes ──────────────────────────────────────────────
 router.get('/holidays', async (req, res) => {
     try {
@@ -1740,6 +1770,7 @@ router.post('/holidays', async (req, res) => {
         const recur = is_recurring === false || is_recurring === 0 ? 0 : 1;
         const desc = description || '';
 
+        let targetId = id;
         if (id) {
             await pool.execute(
                 `UPDATE holidays 
@@ -1748,12 +1779,19 @@ router.post('/holidays', async (req, res) => {
                 [name, disc, stat, start_date || null, end_date || null, cat, recur, desc, id]
             );
         } else {
-            await pool.execute(
+            const [insRes] = await pool.execute(
                 `INSERT INTO holidays (name, discount_percent, status, start_date, end_date, category, is_recurring, description) 
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 [name, disc, stat, start_date || null, end_date || null, cat, recur, desc]
             );
+            targetId = insRes.insertId;
         }
+
+        if (stat === 'active' && targetId) {
+            await pool.execute('UPDATE holidays SET status = "inactive" WHERE id != ?', [targetId]);
+        }
+
+        await syncActiveHolidayToSettings();
 
         return res.json({ success: true });
     } catch (err) {
@@ -1766,6 +1804,7 @@ router.delete('/holidays/:id', async (req, res) => {
     try {
         const { id } = req.params;
         await pool.execute('DELETE FROM holidays WHERE id = ?', [id]);
+        await syncActiveHolidayToSettings();
         return res.json({ success: true });
     } catch (err) {
         console.error('[admin/holidays DELETE]', err);
@@ -1782,18 +1821,12 @@ router.post('/holidays/:id/toggle', async (req, res) => {
         }
 
         const newStatus = rows[0].status === 'active' ? 'inactive' : 'active';
+        if (newStatus === 'active') {
+            await pool.execute('UPDATE holidays SET status = "inactive" WHERE id != ?', [id]);
+        }
         await pool.execute('UPDATE holidays SET status = ? WHERE id = ?', [newStatus, id]);
 
-        if (newStatus === 'active') {
-            try {
-                await pool.execute(
-                    'INSERT INTO settings (setting_key, setting_value) VALUES ("holiday_name", ?), ("discount_percent", ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
-                    [rows[0].name, String(rows[0].discount_percent)]
-                );
-            } catch (sErr) {
-                console.error('[admin/holidays toggle settings sync notice]', sErr.message);
-            }
-        }
+        await syncActiveHolidayToSettings();
 
         return res.json({ success: true, status: newStatus });
     } catch (err) {
