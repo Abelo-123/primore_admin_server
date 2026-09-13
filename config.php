@@ -78,7 +78,10 @@ try {
 
 // Global configurations
 $botToken = getEnvVar('CLIENT_BOT_TOKEN', getEnvVar('BOT_TOKEN', '8590320768:AAHwFYYxr5h0_mJdwQ9In14qvL3pquzTEUs'));
-$gopApiKey = getEnvVar('GODOFPANEL_API_KEY', '1ab105b132d1426faf94ad6e4eb64e35');
+$gopApiKey = getEnvVar('GODOFPANEL_API_KEY');
+if (empty($gopApiKey) || $gopApiKey === '1ab105b132d1426faf94ad6e4eb64e35' || $gopApiKey === '8951b5e44c5779244a9abccb36f33074') {
+    $gopApiKey = '5a9b9d878be6f89f85489975efe48751';
+}
 $smmProviderUrl = getEnvVar('SMM_PROVIDER_URL', getEnvVar('PROVIDER_API_URL', 'https://godofpanel.com/api/v2'));
 
 // Admin auth globals
