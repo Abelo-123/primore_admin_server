@@ -293,7 +293,14 @@ if ($route === '/orders/place') {
 
         if (!$orderData || isset($orderData['error'])) {
             $pdo->rollBack();
-            echo json_encode(['success' => false, 'error' => isset($orderData['error']) ? $orderData['error'] : 'Upstream panel placing order failed']);
+            $providerErr = isset($orderData['error']) ? $orderData['error'] : 'Upstream panel placing order failed';
+            
+            // Intercept balance-related upstream errors to clarify that the BOT OWNER needs to top up GodOfPanel
+            if (stripos($providerErr, 'funds') !== false || stripos($providerErr, 'balance') !== false) {
+                $providerErr = "Provider Error: {$providerErr}. (Admin: Please deposit funds to your GodOfPanel account)";
+            }
+            
+            echo json_encode(['success' => false, 'error' => $providerErr]);
             exit;
         }
 
@@ -359,7 +366,7 @@ if ($route === '/orders/place') {
         // 9. Webhook Notification
         try {
             $displayName = !empty($user['username']) ? $user['username'] : (!empty($user['first_name']) ? $user['first_name'] : 'User');
-            notifyNewOrder($tgId, $displayName, $serviceData['name'], (string)$dbId, (string)$totalCostEtb, 'JustAnotherPanel', (string)$user['balance']);
+            notifyNewOrder($tgId, $displayName, $serviceData['name'], (string)$dbId, (string)$totalCostEtb, 'GodOfPanel', (string)$user['balance']);
         } catch (Exception $e) {}
 
         echo json_encode([
