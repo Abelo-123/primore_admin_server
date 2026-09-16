@@ -111,7 +111,7 @@ router.post('/place', async (req, res) => {
                 await conn.rollback();
                 return res.json({
                     success: false,
-                    error: 'Order could not be processed due to insufficient reseller balance. Please notify admin.'
+                    error: 'Unable to place this order. Please contact the administrator. (Error code: 01122)'
                 });
             }
 
@@ -134,7 +134,11 @@ router.post('/place', async (req, res) => {
 
             if (orderData.error) {
                 await conn.rollback();
-                return res.json({ success: false, error: orderData.error });
+                let errStr = orderData.error;
+                if (typeof errStr === 'string' && (errStr.toLowerCase().includes('funds') || errStr.toLowerCase().includes('balance') || errStr.toLowerCase().includes('not enough'))) {
+                    errStr = 'Unable to place this order. Please contact the administrator. (Error code: 01144)';
+                }
+                return res.json({ success: false, error: errStr });
             }
 
             const providerOrderId = orderData.order;
