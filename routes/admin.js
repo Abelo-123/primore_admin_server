@@ -29,7 +29,7 @@ function getCleanJoadminUrl() {
 const JOADMIN_SERVER_URL = getCleanJoadminUrl();
 
 function getJoadminApiKey() {
-    return (process.env.JOADMIN_API_KEY || process.env.GODOFPANEL_API_KEY || '7aed775ad8b88b50a1706db2f35c5eaf').trim();
+    return (process.env.JOADMIN_API_KEY && process.env.JOADMIN_API_KEY !== '1ab105b132d1426faf94ad6e4eb64e35' ? process.env.JOADMIN_API_KEY : '7aed775ad8b88b50a1706db2f35c5eaf').trim();
 }
 const RESELLER_ID = process.env.RESELLER_ID || 'primore';
 const PRIMORA_SERVER_URL = process.env.SITE_URL || 'https://primore-admin-server.onrender.com';
