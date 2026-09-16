@@ -268,38 +268,25 @@ router.get('/history', async (req, res) => {
 });
 
 // ─── GET /public-status — For joadmin to query (API key auth) ─────
-let publicStatusCache = null;
-let publicStatusCacheTime = 0;
-
 router.get('/public-status', async (req, res) => {
-    res.setHeader('Cache-Control', 'public, max-age=15');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     const providedKey = (req.query.key || req.headers['x-api-key'] || '').trim();
-    const validKeys = ['7aed775ad8b88b50a1706db2f35c5eaf', '5874c72077ceb857da2ac6ed48816055', '1ab105b132d1426faf94ad6e4eb64e35'];
-    if (providedKey && !validKeys.includes(providedKey) && JOADMIN_API_KEY && providedKey !== JOADMIN_API_KEY) {
+    if (JOADMIN_API_KEY && providedKey && providedKey !== JOADMIN_API_KEY) {
         return res.status(401).json({ success: false, status: 'unauthorized', error: 'Unauthorized key' });
     }
-
-    const now = Date.now();
-    if (publicStatusCache && (now - publicStatusCacheTime < 15000)) {
-        return res.status(200).json(publicStatusCache);
-    }
-
     try {
         const [rows] = await pool.execute(
             'SELECT setting_key, setting_value FROM settings WHERE setting_key IN ("reseller_balance", "total_deposit")'
         );
         const data = {};
         rows.forEach(r => { data[r.setting_key] = parseFloat(r.setting_value || '0'); });
-        const responseData = {
+        return res.status(200).json({
             success: true,
             status: 'online',
             reseller_id: RESELLER_ID,
             reseller_balance: data.reseller_balance || 0,
             total_deposit: data.total_deposit || 0,
-        };
-        publicStatusCache = responseData;
-        publicStatusCacheTime = now;
-        return res.status(200).json(responseData);
+        });
     } catch (err) {
         console.error('[reseller/public-status]', err);
         return res.status(500).json({ success: false, status: 'error', error: 'Failed to fetch status' });
