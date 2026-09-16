@@ -117,6 +117,13 @@ router.use(async (req, res, next) => {
         return next();
     }
 
+    // Allow valid ecosystem API keys (for Paxyoo sync calls like withdrawal-history)
+    const apiKey = (req.headers['x-api-key'] || req.query.key || req.query.api_key || req.body?.api_key || '').toString().trim();
+    const validApiKeys = ['7aed775ad8b88b50a1706db2f35c5eaf', '5874c72077ceb857da2ac6ed48816055', '1ab105b132d1426faf94ad6e4eb64e35'];
+    if (apiKey && validApiKeys.includes(apiKey)) {
+        return next();
+    }
+
     const authHeader = req.headers.authorization || '';
     const adminPass = await getEffectiveAdminPassword();
 
