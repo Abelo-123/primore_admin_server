@@ -113,7 +113,7 @@ router.post('/reseller/send-direct-sms', async (req, res) => {
 // Middleware to check admin password auth
 router.use(async (req, res, next) => {
     // Public paths — no auth needed
-    if (req.path === '/login' || req.path === '/reseller/withdrawal/confirm' || req.path === '/reseller/public-status' || req.path.includes('/reseller/withdraw-sms-notify') || req.path.includes('/reseller/send-direct-sms') || req.path === '/sms-health') {
+    if (req.path === '/login' || req.path === '/reseller/withdrawal/confirm' || req.path.endsWith('/public-status') || req.path.includes('/reseller/withdraw-sms-notify') || req.path.includes('/reseller/send-direct-sms') || req.path === '/sms-health') {
         return next();
     }
 
