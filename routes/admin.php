@@ -2319,129 +2319,217 @@ if ($route === '/admin/reseller/deposit/update-status' && $method === 'POST') {
 
 // ─── ROUTE: /admin/reseller/withdraw-deposit (POST) ──────────────────
 if ($route === '/admin/reseller/withdraw-deposit' && $method === 'POST') {
+    header('Content-Type: application/json');
+
     $amount = isset($requestData['amount']) ? (float)$requestData['amount'] : 0.0;
-    $bankName = isset($requestData['bank_name']) ? trim($requestData['bank_name']) : '';
-    $accountNumber = isset($requestData['account_number']) ? trim($requestData['account_number']) : '';
-    $accountName = isset($requestData['account_name']) ? trim($requestData['account_name']) : 'Admin';
-    
-    if ($amount <= 0 || empty($bankName) || empty($accountNumber)) {
+    $bankName = isset($requestData['bank_name']) ? trim((string)$requestData['bank_name']) : '';
+    $accountNumber = isset($requestData['account_number']) ? trim((string)$requestData['account_number']) : '';
+    $accountName = isset($requestData['account_name']) && trim((string)$requestData['account_name']) !== ''
+        ? trim((string)$requestData['account_name'])
+        : 'Admin';
+
+    if ($amount <= 0 || $bankName === '' || $accountNumber === '') {
         http_response_code(400);
-        echo json_encode(['success' => false, 'error' => 'amount, bank_name, and account_number are required']);
+        echo json_encode([
+            'success' => false,
+            'error' => 'amount, bank_name, and account_number are required'
+        ]);
         exit;
     }
-    
-    try {
-        // Fetch current settings
-        $stmt = $pdo->prepare("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('reseller_balance', 'total_deposit')");
-        $stmt->execute();
-        $rows = $stmt->fetchAll();
-        $settings = [];
-        foreach ($rows as $r) {
-            $settings[$r['setting_key']] = $r['setting_value'];
+
+    $env = function (string $key, string $default = ''): string {
+        $value = getenv($key);
+
+        if ($value === false) {
+            $value = $_ENV[$key] ?? $_SERVER[$key] ?? $default;
         }
-        
-        $totalDeposit = isset($settings['total_deposit']) ? (float)$settings['total_deposit'] : 0.0;
-        
+
+        return (string)$value;
+    };
+
+    $httpJson = function (string $method, string $url, array $headers, string $body, int $timeout = 10): array {
+        if (!function_exists('curl_init')) {
+            return [
+                'code' => 0,
+                'body' => '',
+                'error' => 'cURL is not available'
+            ];
+        }
+
+        $ch = curl_init();
+
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2
+        ]);
+
+        if ($method === 'POST' && $body !== '') {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+        }
+
+        $responseBody = curl_exec($ch);
+        $statusCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $error = curl_error($ch);
+
+        curl_close($ch);
+
+        return [
+            'code' => $statusCode,
+            'body' => $responseBody === false ? '' : (string)$responseBody,
+            'error' => $error
+        ];
+    };
+
+    try {
+        $pdo->exec("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('total_deposit', '0')");
+
+        $pdo->beginTransaction();
+
+        $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'total_deposit' FOR UPDATE");
+        $stmt->execute();
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $totalDeposit = $row && isset($row['setting_value']) ? (float)$row['setting_value'] : 0.0;
+
         if ($totalDeposit < $amount) {
+            $pdo->rollBack();
+
             http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'Insufficient withdrawable balance (Total Deposit too low)']);
+            echo json_encode([
+                'success' => false,
+                'error' => "Withdrawal amount ({$amount} ETB) exceeds available Total Deposit balance (" . number_format($totalDeposit, 2) . " ETB)"
+            ]);
             exit;
         }
-        
-        $pdo->beginTransaction();
-        try {
-            // Deduct total_deposit immediately upon withdrawal request
-            $newTotal = max(0.0, $totalDeposit - $amount);
-            $stmt = $pdo->prepare("INSERT INTO settings (setting_key, setting_value) VALUES ('total_deposit', :val) ON DUPLICATE KEY UPDATE setting_value = :val_up");
-            $stmt->execute(['val' => (string)$newTotal, 'val_up' => (string)$newTotal]);
 
-            // Insert into admin_withdrawals
-            $stmt = $pdo->prepare("INSERT INTO admin_withdrawals (amount, bank_name, account_number, account_name, status) VALUES (:amount, :bank, :acc, :name, 'pending')");
-            $stmt->execute(['amount' => $amount, 'bank' => $bankName, 'acc' => $accountNumber, 'name' => $accountName]);
-            $localId = $pdo->lastInsertId();
-            
-            $pdo->commit();
-            
-            // Forward request to joadmin (best effort)
-            $joadminRequestId = null;
-            $joadminUrl = getEnvVar('JOADMIN_SERVER_URL', 'https://padmin121-1.onrender.com');
-            $joadminApiKey = getEnvVar('JOADMIN_API_KEY', '7aed775ad8b88b50a1706db2f35c5eaf');
-            $resellerId = getEnvVar('RESELLER_ID', 'primore');
-            global $siteUrl;
-            
-            // Construct callback URL
-            $baseUrl = (strpos($siteUrl, 'http') === 0) ? $siteUrl : "https://{$siteUrl}";
-            $callbackUrl = "{$baseUrl}/api/admin/reseller/withdrawal/callback";
-            
-            $payload = [
-                'reseller_id'    => $resellerId,
-                'local_id'       => (int)$localId,
-                'amount'         => $amount,
-                'bank_name'      => $bankName,
+        $newTotal = max(0.0, $totalDeposit - $amount);
+
+        $stmt = $pdo->prepare("UPDATE settings SET setting_value = :new_total WHERE setting_key = 'total_deposit'");
+        $stmt->execute([
+            'new_total' => number_format($newTotal, 2, '.', '')
+        ]);
+
+        $stmt = $pdo->prepare("INSERT INTO admin_withdrawals (amount, bank_name, account_number, account_name, status) VALUES (:amount, :bank_name, :account_number, :account_name, 'pending')");
+        $stmt->execute([
+            'amount' => $amount,
+            'bank_name' => $bankName,
+            'account_number' => $accountNumber,
+            'account_name' => $accountName
+        ]);
+
+        $localId = (int)$pdo->lastInsertId();
+
+        $pdo->commit();
+    } catch (Exception $txErr) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Failed to process withdrawal: ' . $txErr->getMessage()
+        ]);
+        exit;
+    }
+
+    $joadminRequestId = null;
+
+    try {
+        $joadminUrl = rtrim($env('JOADMIN_SERVER_URL', 'https://padmin121-1.onrender.com'), '/');
+        $joadminApiKey = $env('JOADMIN_API_KEY', '');
+        $resellerId = $env('RESELLER_ID', 'primore');
+        $siteUrl = $env('SITE_URL', 'https://primore-admin-server.onrender.com');
+        $baseUrl = strpos($siteUrl, 'http') === 0 ? $siteUrl : "https://{$siteUrl}";
+        $callbackUrl = "{$baseUrl}/api/admin/reseller/withdrawal/callback";
+
+        if ($joadminApiKey !== '') {
+            $payload = json_encode([
+                'reseller_id' => $resellerId,
+                'local_id' => $localId,
+                'amount' => $amount,
+                'bank_name' => $bankName,
                 'account_number' => $accountNumber,
-                'account_name'   => $accountName,
-                'callback_url'   => $callbackUrl
-            ];
-            
-            $headers = [
-                "x-api-key: {$joadminApiKey}",
-                "Content-Type: application/json"
-            ];
-            
-            $fwRes = curlRequest('POST', "{$joadminUrl}/api/admin/reseller/withdrawal-request", $headers, json_encode($payload), 10);
-            
+                'account_name' => $accountName,
+                'callback_url' => $callbackUrl
+            ]);
+
+            $fwRes = $httpJson(
+                'POST',
+                "{$joadminUrl}/api/admin/reseller/withdrawal-request",
+                [
+                    'x-api-key: ' . $joadminApiKey,
+                    'Content-Type: application/json'
+                ],
+                $payload,
+                10
+            );
+
             if ($fwRes['code'] === 200) {
                 $fwData = json_decode($fwRes['body'], true);
-                if (isset($fwData['request_id'])) {
+
+                if (is_array($fwData) && isset($fwData['request_id'])) {
                     $joadminRequestId = (int)$fwData['request_id'];
-                    
-                    $stmt = $pdo->prepare("UPDATE admin_withdrawals SET joadmin_request_id = :jo_id WHERE id = :id");
-                    $stmt->execute(['jo_id' => $joadminRequestId, 'id' => $localId]);
+
+                    $stmt = $pdo->prepare("UPDATE admin_withdrawals SET joadmin_request_id = :joadmin_request_id WHERE id = :id");
+                    $stmt->execute([
+                        'joadmin_request_id' => $joadminRequestId,
+                        'id' => $localId
+                    ]);
                 }
             }
-            
-            // Dispatch Telegram Notification via Bot 8662579997:AAHp2xw6pZLOcfHumSWfmT3BsU8NMsfMA0Y
-            try {
-                $withdrawBotToken = getEnvVar('WITHDRAWAL_BOT_TOKEN', '8662579997:AAHp2xw6pZLOcfHumSWfmT3BsU8NMsfMA0Y');
-                $adminChatIds = [5928771903, 779060335, 460529558];
-                $currentTime = date('Y-m-d H:i:s');
-                $msg = "💸 <b>New Reseller Withdrawal Request</b>\n\n" .
-                       "👤 Reseller: <b>" . htmlspecialchars($accountName) . "</b>\n" .
-                       "💵 Amount: <b>" . number_format($amount, 2, '.', '') . " ETB</b>\n" .
-                       "🏦 Bank: <b>" . htmlspecialchars($bankName) . "</b>\n" .
-                       "🔢 Account Number: <code>" . htmlspecialchars($accountNumber) . "</code>\n" .
-                       "🆔 Local Request ID: <code>#" . $localId . "</code>\n" .
-                       "🕒 Time: " . $currentTime;
-
-                foreach ($adminChatIds as $chatId) {
-                    curlRequest('POST', "https://api.telegram.org/bot{$withdrawBotToken}/sendMessage", [
-                        'Content-Type: application/json'
-                    ], json_encode([
-                        'chat_id'    => $chatId,
-                        'text'       => $msg,
-                        'parse_mode' => 'HTML'
-                    ]), 5);
-                }
-            } catch (Exception $tgErr) {}
-            
-            echo json_encode([
-                'success'            => true,
-                'new_total_deposit'  => $newTotal,
-                'local_id'           => (int)$localId,
-                'joadmin_request_id' => $joadminRequestId,
-                'status'             => 'pending',
-                'message'            => 'Withdrawal request submitted. Awaiting joadmin confirmation.'
-            ]);
-            
-        } catch (Exception $txErr) {
-            $pdo->rollBack();
-            throw $txErr;
         }
-        
-    } catch (Exception $e) {
-        http_response_code(500);
-        echo json_encode(['success' => false, 'error' => 'Failed to process withdrawal: ' . $e->getMessage()]);
+    } catch (Exception $forwardErr) {
     }
+
+    try {
+        $withdrawBotToken = $env('WITHDRAWAL_BOT_TOKEN', '');
+
+        if ($withdrawBotToken !== '') {
+            $adminChatIds = [5928771903, 779060335, 460529558];
+            $currentTime = date('Y-m-d H:i:s');
+
+            $msg = "💸 <b>New Reseller Withdrawal Request</b>\n"
+                . "👤 Reseller: <b>" . htmlspecialchars($accountName, ENT_QUOTES, 'UTF-8') . "</b>\n"
+                . "💵 Amount: <b>" . number_format($amount, 2, '.', '') . " ETB</b>\n"
+                . "🏦 Bank: <b>" . htmlspecialchars($bankName, ENT_QUOTES, 'UTF-8') . "</b>\n"
+                . "🔢 Account Number: <code>" . htmlspecialchars($accountNumber, ENT_QUOTES, 'UTF-8') . "</code>\n"
+                . "🆔 Local Request ID: <code>#" . $localId . "</code>\n"
+                . "🕒 Time: " . $currentTime;
+
+            foreach ($adminChatIds as $chatId) {
+                $httpJson(
+                    'POST',
+                    "https://api.telegram.org/bot{$withdrawBotToken}/sendMessage",
+                    [
+                        'Content-Type: application/json'
+                    ],
+                    json_encode([
+                        'chat_id' => $chatId,
+                        'text' => $msg,
+                        'parse_mode' => 'HTML'
+                    ]),
+                    5
+                );
+            }
+        }
+    } catch (Exception $tgErr) {
+    }
+
+    echo json_encode([
+        'success' => true,
+        'new_total_deposit' => (float)$newTotal,
+        'local_id' => $localId,
+        'joadmin_request_id' => $joadminRequestId,
+        'status' => 'pending',
+        'message' => 'Withdrawal request submitted. Awaiting joadmin confirmation.'
+    ]);
+
     exit;
 }
 

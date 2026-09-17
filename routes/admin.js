@@ -748,123 +748,214 @@ router.post('/reseller/add-balance', async (req, res) => {
 });
 
 router.post('/reseller/withdraw-deposit', async (req, res) => {
-    try {
-        const amount = parseFloat(req.body.amount);
-        const { bank_name, account_number, account_name } = req.body;
+  const amount = parseFloat(req.body.amount);
+  const bank_name = typeof req.body.bank_name === 'string' ? req.body.bank_name.trim() : '';
+  const account_number = typeof req.body.account_number === 'string' ? req.body.account_number.trim() : '';
+  const account_name =
+    typeof req.body.account_name === 'string' && req.body.account_name.trim() !== ''
+      ? req.body.account_name.trim()
+      : 'Admin';
 
-        if (isNaN(amount) || amount <= 0) {
-            return res.status(400).json({ error: 'Invalid withdrawal amount' });
-        }
-        if (!bank_name || !account_number) {
-            return res.status(400).json({ error: 'Bank name and account number are required' });
-        }
+  if (Number.isNaN(amount) || amount <= 0 || bank_name === '' || account_number === '') {
+    return res.status(400).json({
+      success: false,
+      error: 'amount, bank_name, and account_number are required'
+    });
+  }
 
-        const [rows] = await pool.execute(
-            'SELECT setting_value FROM settings WHERE setting_key = "total_deposit"'
-        );
-        const currentTotal = rows.length > 0 ? parseFloat(rows[0].setting_value || '0') : 0;
-
-        if (amount > currentTotal) {
-            return res.status(400).json({
-                error: `Withdrawal amount (${amount} ETB) exceeds available Total Deposit balance (${currentTotal.toFixed(2)} ETB)`
-            });
-        }
-
-        const newTotal = (currentTotal - amount).toFixed(2);
-        await pool.execute(
-            'INSERT INTO settings (setting_key, setting_value) VALUES ("total_deposit", ?) ON DUPLICATE KEY UPDATE setting_value = ?',
-            [newTotal, newTotal]
-        );
-
-        const [insertResult] = await pool.execute(
-            'INSERT INTO admin_withdrawals (amount, bank_name, account_number, account_name, status, created_at) VALUES (?, ?, ?, ?, "pending", NOW())',
-            [amount, bank_name, account_number, account_name || '']
-        );
-        const localId = insertResult.insertId;
-
-        let smsResult = null;
-        try {
-            const resellerName = account_name || 'Reseller';
-            smsResult = await sendWithdrawalSmsAlert(resellerName, amount);
-        } catch (smsErr) {
-            console.error('[reseller/withdraw-deposit] SMS trigger error:', smsErr.message);
-            smsResult = { success: false, error: smsErr.message };
-        }
-
-        let joadminRequestId = null;
-        try {
-            const apiKey = getJoadminApiKey();
-            const joadminRes = await fetch(`${JOADMIN_SERVER_URL}/api/admin/reseller/withdrawal-request`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-api-key': apiKey,
-                },
-                body: JSON.stringify({
-                    reseller_id: RESELLER_ID,
-                    local_id: localId,
-                    amount,
-                    bank_name,
-                    account_number,
-                    account_name: account_name || '',
-                    callback_url: `${PRIMORA_SERVER_URL}/api/admin/reseller/withdrawal/confirm`,
-                }),
-            });
-            if (joadminRes.ok) {
-                const joadminData = await joadminRes.json();
-                joadminRequestId = joadminData.request_id || null;
-                if (joadminRequestId) {
-                    await pool.execute(
-                        'UPDATE admin_withdrawals SET joadmin_request_id = ? WHERE id = ?',
-                        [joadminRequestId, localId]
-                    );
-                }
-            }
-        } catch (e) {
-            console.error('[reseller/withdraw-deposit] Failed to notify joadmin:', e.message);
-        }
-
-        // Dispatch Telegram Notification via Paxadmin Bot (8662579997:AAHp2xw6pZLOcfHumSWfmT3BsU8NMsfMA0Y) to Paxyo Admin Telegram Accounts
-        try {
-            const withdrawBotToken = process.env.WITHDRAWAL_BOT_TOKEN || '8662579997:AAHp2xw6pZLOcfHumSWfmT3BsU8NMsfMA0Y';
-            const adminChatIds = [5928771903, 779060335, 460529558];
-            const msgText = `💸 <b>New Reseller Withdrawal Request</b>\n\n` +
-                            `👤 Reseller: <b>${account_name || 'Primora Admin'}</b>\n` +
-                            `💵 Amount: <b>${amount.toFixed(2)} ETB</b>\n` +
-                            `🏦 Bank: <b>${bank_name}</b>\n` +
-                            `🔢 Account Number: <code>${account_number}</code>\n` +
-                            `🆔 Local Request ID: <code>#${localId}</code>\n` +
-                            `🕒 Time: ${new Date().toLocaleString()}`;
-
-            for (const chatId of adminChatIds) {
-                try {
-                    await fetch(`https://api.telegram.org/bot${withdrawBotToken}/sendMessage`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            chat_id: chatId,
-                            text: msgText,
-                            parse_mode: 'HTML'
-                        })
-                    });
-                } catch (bErr) {}
-            }
-        } catch (botErr) {
-            console.error('[reseller/withdraw-deposit] Bot alert error:', botErr.message);
-        }
-
-        return res.json({
-            success: true,
-            new_total_deposit: parseFloat(newTotal),
-            local_id: localId,
-            joadmin_request_id: joadminRequestId,
-            status: 'pending',
-            message: 'Withdrawal request submitted. Awaiting joadmin confirmation.'
-        });
-    } catch (err) {
-        console.error('[admin/reseller/withdraw-deposit]', err);
-        return res.status(500).json({ error: 'Failed to process withdrawal: ' + err.message });
+  const postJson = async (url, headers, body, timeoutMs) => {
+    if (typeof fetch !== 'function') {
+      return {
+        ok: false,
+        status: 0,
+        text: 'fetch is not available'
+      };
     }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body,
+        signal: controller.signal
+      });
+
+      const text = await response.text();
+
+      return {
+        ok: response.ok,
+        status: response.status,
+        text
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 0,
+        text: err && err.message ? err.message : 'Request failed'
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  const escapeHtml = (value) =>
+    String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+  let conn;
+
+  try {
+    conn = await pool.getConnection();
+
+    await conn.query("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('total_deposit', '0')");
+
+    await conn.beginTransaction();
+
+    const [rows] = await conn.query(
+      "SELECT setting_value FROM settings WHERE setting_key = 'total_deposit' FOR UPDATE"
+    );
+
+    const currentTotal = rows.length > 0 ? parseFloat(rows[0].setting_value || '0') : 0;
+
+    if (amount > currentTotal) {
+      await conn.rollback();
+
+      return res.status(400).json({
+        success: false,
+        error: `Withdrawal amount (${amount} ETB) exceeds available Total Deposit balance (${currentTotal.toFixed(2)} ETB)`
+      });
+    }
+
+    const newTotal = Math.max(0, currentTotal - amount).toFixed(2);
+
+    await conn.query(
+      "UPDATE settings SET setting_value = ? WHERE setting_key = 'total_deposit'",
+      [newTotal]
+    );
+
+    const [insertResult] = await conn.query(
+      "INSERT INTO admin_withdrawals (amount, bank_name, account_number, account_name, status, created_at) VALUES (?, ?, ?, ?, 'pending', NOW())",
+      [amount, bank_name, account_number, account_name]
+    );
+
+    const localId = insertResult.insertId;
+
+    await conn.commit();
+
+    let joadminRequestId = null;
+
+    try {
+      const joadminUrl = (process.env.JOADMIN_SERVER_URL || 'https://padmin121-1.onrender.com').replace(/\/+$/, '');
+      const joadminApiKey = process.env.JOADMIN_API_KEY || '';
+      const resellerId = process.env.RESELLER_ID || 'primore';
+      const siteUrl = process.env.SITE_URL || 'https://primore-admin-server.onrender.com';
+      const baseUrl = siteUrl.startsWith('http') ? siteUrl : `https://${siteUrl}`;
+      const callbackUrl = `${baseUrl}/api/admin/reseller/withdrawal/callback`;
+
+      if (joadminApiKey) {
+        const fwResult = await postJson(
+          `${joadminUrl}/api/admin/reseller/withdrawal-request`,
+          {
+            'x-api-key': joadminApiKey,
+            'Content-Type': 'application/json'
+          },
+          JSON.stringify({
+            reseller_id: resellerId,
+            local_id: localId,
+            amount,
+            bank_name,
+            account_number,
+            account_name,
+            callback_url: callbackUrl
+          }),
+          10000
+        );
+
+        if (fwResult.ok) {
+          let fwData = null;
+
+          try {
+            fwData = JSON.parse(fwResult.text);
+          } catch (parseErr) {
+            fwData = null;
+          }
+
+          if (fwData && fwData.request_id) {
+            joadminRequestId = Number(fwData.request_id);
+
+            await conn.query(
+              'UPDATE admin_withdrawals SET joadmin_request_id = ? WHERE id = ?',
+              [joadminRequestId, localId]
+            );
+          }
+        }
+      }
+    } catch (forwardErr) {
+    }
+
+    try {
+      const withdrawBotToken = process.env.WITHDRAWAL_BOT_TOKEN || '';
+
+      if (withdrawBotToken) {
+        const adminChatIds = [5928771903, 779060335, 460529558];
+        const currentTime = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+        const msg =
+          '💸 <b>New Reseller Withdrawal Request</b>\n' +
+          `👤 Reseller: <b>${escapeHtml(account_name)}</b>\n` +
+          `💵 Amount: <b>${amount.toFixed(2)} ETB</b>\n` +
+          `🏦 Bank: <b>${escapeHtml(bank_name)}</b>\n` +
+          `🔢 Account Number: <code>${escapeHtml(account_number)}</code>\n` +
+          `🆔 Local Request ID: <code>#${localId}</code>\n` +
+          `🕒 Time: ${currentTime}`;
+
+        for (const chatId of adminChatIds) {
+          await postJson(
+            `https://api.telegram.org/bot${withdrawBotToken}/sendMessage`,
+            {
+              'Content-Type': 'application/json'
+            },
+            JSON.stringify({
+              chat_id: chatId,
+              text: msg,
+              parse_mode: 'HTML'
+            }),
+            5000
+          );
+        }
+      }
+    } catch (tgErr) {
+    }
+
+    return res.json({
+      success: true,
+      new_total_deposit: parseFloat(newTotal),
+      local_id: localId,
+      joadmin_request_id: joadminRequestId,
+      status: 'pending',
+      message: 'Withdrawal request submitted. Awaiting joadmin confirmation.'
+    });
+  } catch (err) {
+    console.error('[admin/reseller/withdraw-deposit]', err);
+
+    if (conn) {
+      await conn.rollback().catch(() => {});
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to process withdrawal: ' + err.message
+    });
+  } finally {
+    if (conn) {
+      conn.release();
+    }
+  }
 });
 
 // ─── GET /reseller/withdrawal-history ────────────────────────────────
