@@ -178,7 +178,10 @@ router.get('/dashboard', async (req, res) => {
             return {
                 ...o,
                 cost: val,
-                charge: val
+                charge: val,
+                provider_order_id: String(o.provider_order_id || o.api_order_id || ''),
+                start_count: o.start_count !== undefined && o.start_count !== null ? parseInt(o.start_count, 10) : 0,
+                target_link: o.target_link || o.link || ''
             };
         });
 
@@ -361,7 +364,10 @@ router.get('/orders', async (req, res) => {
             return {
                 ...o,
                 cost: val,
-                charge: val
+                charge: val,
+                provider_order_id: String(o.provider_order_id || o.api_order_id || ''),
+                start_count: o.start_count !== undefined && o.start_count !== null ? parseInt(o.start_count, 10) : 0,
+                target_link: o.target_link || o.link || ''
             };
         });
 

@@ -163,6 +163,19 @@ function formatOrderRow($row) {
     
     if (isset($row['start_count'])) $row['start_count'] = (int)$row['start_count'];
     if (isset($row['remains'])) $row['remains'] = (int)$row['remains'];
+
+    if (!isset($row['provider_order_id']) || empty($row['provider_order_id'])) {
+        if (isset($row['api_order_id']) && !empty($row['api_order_id'])) {
+            $row['provider_order_id'] = (string)$row['api_order_id'];
+        } else {
+            $row['provider_order_id'] = (string)$row['id'];
+        }
+    }
+    if (!isset($row['target_link']) || empty($row['target_link'])) {
+        if (isset($row['link']) && !empty($row['link'])) {
+            $row['target_link'] = $row['link'];
+        }
+    }
     return $row;
 }
 
