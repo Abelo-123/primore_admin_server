@@ -16,8 +16,12 @@ import pool from '../config/database.js';
 import { sendSmsEthiopia } from '../lib/sms.js';
 import { sendWithdrawalSmsAlert } from '../test_live_smsethiopia_api.js';
 import { notifyDeposit } from '../lib/notify.js';
+import { registerResellerBalanceRoutes } from './resellerBalanceHandlers.js';
 
 const router = Router();
+
+registerResellerBalanceRoutes(router, pool);
+
 
 function getCleanJoadminUrl() {
     let url = process.env.JOADMIN_SERVER_URL || 'https://padmin121-1.onrender.com';
