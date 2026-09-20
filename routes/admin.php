@@ -2472,32 +2472,38 @@ if ($route === '/admin/reseller/withdraw-deposit' && $method === 'POST') {
                 'callback_url' => $callbackUrl
             ]);
 
-            $fwRes = $httpJson(
-                'POST',
-                "{$joadminUrl}/api/admin/reseller/withdrawal-request",
-                [
-                    'x-api-key: ' . $joadminApiKey,
-                    'Content-Type: application/json'
-                ],
-                $payload,
-                10
-            );
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, "{$joadminUrl}/api/admin/reseller/withdrawal-request");
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'x-api-key: ' . $joadminApiKey,
+                'Content-Type: application/json'
+            ]);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
 
-            if ($fwRes['code'] === 200) {
-                $fwData = json_decode($fwRes['body'], true);
+            $responseBody = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+            curl_close($ch);
 
+            if ($httpCode === 200 && $responseBody) {
+                $fwData = json_decode($responseBody, true);
                 if (is_array($fwData) && isset($fwData['request_id'])) {
                     $joadminRequestId = (int)$fwData['request_id'];
-
                     $stmt = $pdo->prepare("UPDATE admin_withdrawals SET joadmin_request_id = :joadmin_request_id WHERE id = :id");
                     $stmt->execute([
                         'joadmin_request_id' => $joadminRequestId,
                         'id' => $localId
                     ]);
                 }
+            } else {
+                error_log("Primore Withdrawal Forward Failed: HTTP {$httpCode}, Response: {$responseBody}, Error: {$curlError}");
             }
         }
     } catch (Exception $forwardErr) {
+        error_log("Primore Withdrawal Forward Exception: " . $forwardErr->getMessage());
     }
 
     try {
