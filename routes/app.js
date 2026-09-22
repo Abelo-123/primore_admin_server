@@ -12,7 +12,6 @@ router.get('/settings', async (req, res) => {
 
         const settings = {
             rateMultiplier: 55,
-            discountPercent: 0,
             holidayName: '',
             maintenanceMode: false,
             userCanOrder: true,
@@ -23,7 +22,6 @@ router.get('/settings', async (req, res) => {
         
         rows.forEach(row => {
             if (row.setting_key === 'rate_multiplier') settings.rateMultiplier = parseFloat(row.setting_value) || 55;
-            if (row.setting_key === 'discount_percent') settings.discountPercent = parseFloat(row.setting_value) || 0;
             if (row.setting_key === 'holiday_name') settings.holidayName = row.setting_value;
             if (row.setting_key === 'maintenance_mode') settings.maintenanceMode = (row.setting_value === '1' || row.setting_value === 'true');
             if (row.setting_key === 'user_can_order') settings.userCanOrder = (row.setting_value === '1' || row.setting_value === 'true');
@@ -38,9 +36,8 @@ router.get('/settings', async (req, res) => {
 
         // Always check if there is an active holiday in the holidays table
         try {
-            const [activeHolidays] = await pool.execute("SELECT name, discount_percent FROM holidays WHERE status = 'active' ORDER BY id DESC LIMIT 1");
+            const [activeHolidays] = await pool.execute("SELECT name FROM holidays WHERE status = 'active' ORDER BY id DESC LIMIT 1");
             if (activeHolidays.length > 0) {
-                settings.discountPercent = parseFloat(activeHolidays[0].discount_percent) || 0;
                 settings.holidayName = activeHolidays[0].name || '';
             }
         } catch (hErr) {
@@ -50,7 +47,7 @@ router.get('/settings', async (req, res) => {
         return res.json(settings);
     } catch (err) {
         console.error(err);
-        return res.json({ rateMultiplier: 55, discountPercent: 0, holidayName: '', maintenanceMode: false, userCanOrder: true, marqueeText: '', topServicesIds: [], botUsername: 'abiyclient_bot' });
+        return res.json({ rateMultiplier: 55, holidayName: '', maintenanceMode: false, userCanOrder: true, marqueeText: '', topServicesIds: [], botUsername: 'abiyclient_bot' });
     }
 });
 
